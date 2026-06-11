@@ -1,6 +1,7 @@
 """
 Event
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -569,7 +570,7 @@ class EventAlgorithm(Algorithm, DebugContents):
         }[new_state_group]
 
         # store the timestamp
-        time_stamp = TimeStamp.as_time()
+        time_stamp = TimeStamp.as_dateTime()
         event_initiating_object.eventTimeStamps[new_state_index] = time_stamp
 
         # store text in eventMessageTexts if present
@@ -611,14 +612,14 @@ class EventAlgorithm(Algorithm, DebugContents):
             # Notify Type will be ALARM or EVENT and not ACK_NOTIFICATION, so this
             # is always CHANGE_OF_RELIABILITY, Clause 13.9.1.1.7
             notification_parameters["eventType"] = EventType.changeOfReliability
-            notification_parameters[
-                "eventValues"
-            ] = self.fault_notification_parameters()
+            notification_parameters["eventValues"] = (
+                self.fault_notification_parameters()
+            )
         else:
             notification_parameters["eventType"] = self.event_type
-            notification_parameters[
-                "eventValues"
-            ] = self.event_notification_parameters()
+            notification_parameters["eventValues"] = (
+                self.event_notification_parameters()
+            )
 
         # pass these parameters to send out confirmed or unconfirmed event
         # notification requests
@@ -1200,9 +1201,7 @@ class CommandFailureEventAlgorithm(EventAlgorithm):
         super().__init__(monitoring_object, monitored_object)
 
         if monitoring_object:
-            fpr: DeviceObjectPropertyReference = (
-                monitoring_object.eventParameters.commandFailure.feedbackPropertyReference
-            )
+            fpr: DeviceObjectPropertyReference = monitoring_object.eventParameters.commandFailure.feedbackPropertyReference
 
             # resolve the fpr.objectIdentifier to point to an object
             fpr_object: Optional[Object] = None

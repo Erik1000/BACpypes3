@@ -595,12 +595,12 @@ class EventAlgorithm(Algorithm, DebugContents):
             "timeStamp": time_stamp,
             "notificationClass": event_initiating_object.notificationClass,
             "priority": event_initiating_object._notification_class_object.priority[
-                new_state_group
+                new_state_index
             ],
             "messageText": message_text,
             "notifyType": event_initiating_object.notifyType,
             "ackRequired": event_initiating_object._notification_class_object.ackRequired[
-                new_state_group
+                new_state_index
             ],
             "fromState": old_state,
             "toState": new_state,

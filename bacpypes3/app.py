@@ -710,8 +710,9 @@ class Application(
                 )
 
                 # the TLS context is supplied out-of-band on the network port
-                # object for initial bring-up (file-path credentials)
-                ssl_context = getattr(obj, "ssl_context", None)
+                # object for initial bring-up (file-path credentials); a leading
+                # underscore stores it as plain data outside the property system
+                ssl_context = getattr(obj, "_ssl_context", None)
 
                 link_layer = SCNodeLinkLayer(
                     link_address,

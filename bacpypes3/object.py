@@ -950,7 +950,7 @@ class AnalogValueObject(Object):
 
 class AuditLogObject(Object):
     _required = (
-        "statusFlags" "eventState",
+        "statusFlagseventState",
         "enable",
         "bufferSize",
         "logBuffer",

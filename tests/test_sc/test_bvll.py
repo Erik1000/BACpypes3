@@ -178,7 +178,8 @@ class TestEncapsulatedNPDU(unittest.TestCase):
             # data options
             "01"  # secure path option
             # payload (npdu)
-            "0104" "0000010C0C000000051955"
+            "0104"
+            "0000010C0C000000051955"
         )
         lpdu = decode_lpdu(blob)
 

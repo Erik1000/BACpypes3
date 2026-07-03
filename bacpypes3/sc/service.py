@@ -230,7 +230,7 @@ class SCDirectConnectClient(WebSocketClient):
             switch,
             uri,
             subprotocols=[websockets.Subprotocol("dc.bsc.bacnet.org")],
-            **kwargs
+            **kwargs,
         )
 
 
@@ -251,13 +251,12 @@ class SCHubClient(WebSocketClient):
             switch,
             uri,
             subprotocols=[websockets.Subprotocol("hub.bsc.bacnet.org")],
-            **kwargs
+            **kwargs,
         )
 
 
 @bacpypes_debugging
 class WebSocketServer:
-
     _debug: Callable[..., None]
     _exception: Callable[..., None]
 
@@ -444,7 +443,6 @@ class SCHubServiceAccessPoint(SCServiceAccessPoint):
 
 @bacpypes_debugging
 class SCNodeSwitch(Server[PDU]):
-
     _debug: Callable[..., None]
     _exception: Callable[..., None]
 

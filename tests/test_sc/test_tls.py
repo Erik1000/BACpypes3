@@ -50,6 +50,16 @@ class TestSSLPolicy(unittest.TestCase):
         assert context.check_hostname is False
         assert context.verify_mode == ssl.CERT_REQUIRED
 
+    def test_strict_verification_disabled(self):
+        # Clause YY.7.4 forbids extra checks; strict X.509 verification (which
+        # rejects certificates missing an Authority Key Identifier) must be off
+        if not hasattr(ssl, "VERIFY_X509_STRICT"):
+            self.skipTest("VERIFY_X509_STRICT not available")
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.verify_flags |= ssl.VERIFY_X509_STRICT
+        harden_ssl_context(context)
+        assert not (context.verify_flags & ssl.VERIFY_X509_STRICT)
+
     def test_missing_ca_file_raises(self):
         # a non-existent issuer certificate file must fail
         with self.assertRaises(Exception):

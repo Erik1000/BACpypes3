@@ -46,9 +46,7 @@ class TestSCNodeLinkLayer(unittest.TestCase):
 
     def test_failover_uri(self):
         vmac = SecureConnectAddress.random()
-        link_layer = SCNodeLinkLayer(
-            vmac, uuid4(), "wss://primary/", "wss://failover/"
-        )
+        link_layer = SCNodeLinkLayer(vmac, uuid4(), "wss://primary/", "wss://failover/")
         assert link_layer.connector._uris == ["wss://primary/", "wss://failover/"]
 
     def test_vmac_change_propagates(self):

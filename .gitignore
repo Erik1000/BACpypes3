@@ -60,3 +60,7 @@ docs/_build/
 
 # PyBuilder
 target/
+
+# BACnet/SC operational credentials - never commit private keys or certificates
+*.pem
+*.key

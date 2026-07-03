@@ -30,6 +30,7 @@ Certificate_Signing_Request_File) is a later, compliance-oriented step.
 """
 
 import asyncio
+import logging
 import uuid
 from argparse import ArgumentParser
 
@@ -46,6 +47,14 @@ _debug = 0
 _log = ModuleLogger(globals())
 
 
+def _wss_uri(uri: str) -> str:
+    """BACnet/SC only permits the 'wss' scheme; add it if a bare host:port was
+    given."""
+    if uri and "://" not in uri:
+        return "wss://" + uri
+    return uri
+
+
 async def main() -> None:
     parser = ArgumentParser(description="BACnet/SC node device")
     parser.add_argument("--name", default="SCNode", help="device name")
@@ -58,7 +67,19 @@ async def main() -> None:
     parser.add_argument("--cert", required=True, help="operational certificate (PEM)")
     parser.add_argument("--key", required=True, help="private key (PEM)")
     parser.add_argument("--ca", required=True, help="issuer/CA certificate(s) (PEM)")
+    parser.add_argument(
+        "--debug", action="store_true", help="show BACnet/SC connection logging"
+    )
     args = parser.parse_args()
+
+    if args.debug:
+        logging.basicConfig(
+            level=logging.DEBUG, format="%(asctime)s %(name)s %(levelname)s %(message)s"
+        )
+        logging.getLogger("bacpypes3.sc.service").setLevel(logging.DEBUG)
+    else:
+        # at least surface connection warnings (TLS/connect failures)
+        logging.basicConfig(level=logging.WARNING)
 
     # every BACnet/SC device requires a stable device UUID (Clause YY.1.5.3)
     device_object = DeviceObject(
@@ -69,17 +90,21 @@ async def main() -> None:
     )
 
     # a secure-connect network port with a Random-48 VMAC
+    primary_hub_uri = _wss_uri(args.hub)
+    failover_hub_uri = _wss_uri(args.failover) if args.failover else ""
     network_port = NetworkPortObject(
         SecureConnectAddress.random(),
         objectIdentifier=("network-port", 1),
         objectName="SC Port 1",
-        scPrimaryHubURI=args.hub,
-        scFailoverHubURI=args.failover or "",
+        scPrimaryHubURI=primary_hub_uri,
+        scFailoverHubURI=failover_hub_uri,
     )
 
     # attach the mutual-TLS context (v1 file-path credentials) so the link
-    # layer can establish the secured WebSocket connection to the hub
-    network_port.ssl_context = create_ssl_context(args.cert, args.key, args.ca)
+    # layer can establish the secured WebSocket connection to the hub.  A
+    # leading underscore stores it as plain data, bypassing the BACnet
+    # property machinery on the local object.
+    network_port._ssl_context = create_ssl_context(args.cert, args.key, args.ca)
 
     # a sample point to read
     analog_value = AnalogValueObject(
@@ -88,14 +113,30 @@ async def main() -> None:
         presentValue=21.5,
     )
 
-    app = Application.from_object_list(
-        [device_object, network_port, analog_value]
-    )
-    _log.info("running as %s on %s", args.name, args.hub)
+    app = Application.from_object_list([device_object, network_port, analog_value])
+    _log.info("running as %s on %s", args.name, primary_hub_uri)
+
+    # report hub connection status
+    link_layer = app.link_layers.get(network_port.objectIdentifier)
+
+    async def monitor() -> None:
+        connector = link_layer.connector
+        was_connected = False
+        while True:
+            is_connected = connector.connected.is_set()
+            if is_connected and not was_connected:
+                print(f"connected to hub {connector.peer_vmac} ({connector.peer_uuid})")
+            elif was_connected and not is_connected:
+                print("hub connection lost")
+            was_connected = is_connected
+            await asyncio.sleep(1.0)
+
+    monitor_task = asyncio.ensure_future(monitor())
 
     try:
         await asyncio.Future()
     finally:
+        monitor_task.cancel()
         app.close()
 
 

@@ -59,7 +59,9 @@ def harden_ssl_context(
     peer's operational certificate is valid and signed by a configured CA.
     """
     if _debug:
-        harden_ssl_context._debug("harden_ssl_context %r server_side=%r", context, server_side)
+        harden_ssl_context._debug(
+            "harden_ssl_context %r server_side=%r", context, server_side
+        )
 
     # TLS 1.3 is required
     context.minimum_version = ssl.TLSVersion.TLSv1_3
@@ -67,6 +69,15 @@ def harden_ssl_context(
     # mutual authentication, but no hostname/subject matching by default
     context.check_hostname = False
     context.verify_mode = ssl.CERT_REQUIRED
+
+    # Clause YY.7.4 requires exactly four checks (well-formed, in validity
+    # period, not revoked if known, signed by a configured CA) and states that
+    # "no additional checks beyond the above shall be performed by default".
+    # Newer OpenSSL/Python enable strict X.509 verification in the default
+    # context (which, for example, rejects certificates lacking an Authority
+    # Key Identifier); that harms interoperability, so it is disabled here.
+    if hasattr(ssl, "VERIFY_X509_STRICT"):
+        context.verify_flags &= ~ssl.VERIFY_X509_STRICT
 
     return context
 

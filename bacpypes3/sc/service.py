@@ -13,8 +13,10 @@ from typing import TYPE_CHECKING, Any, Callable, List, Optional, Set, Tuple, Uni
 
 from ..debugging import ModuleLogger, bacpypes_debugging
 
-from ..comm import Server, ServiceAccessPoint
-from ..pdu import LocalBroadcast, IPv4Address, PDU
+from ..comm import Client, Server, ServiceAccessPoint
+from ..pdu import Address, LocalBroadcast, IPv4Address, PDU, SecureConnectAddress
+
+from .bvll import LPDU, EncapsulatedNPDU
 
 
 # some debugging
@@ -542,3 +544,145 @@ class SCNodeSwitch(Server[PDU]):
         # cancel the server task
         if self.server_task:
             self.server_task.cancel()
+
+
+@bacpypes_debugging
+class SCBVLLServiceAccessPoint(Client[LPDU], Server[PDU], ServiceAccessPoint):
+    """
+    BACnet/SC Virtual Link Layer entity (BVLL entity, see Annex AB / Clause
+    YY.1.1.1).
+
+    This is the SC equivalent of the IPv4 BIPNormal service access point.  It
+    is stacked on a BVLLCodec: as a server (top) it exchanges NPDUs with the
+    network layer using BACnet addresses; as a client (bottom) it exchanges
+    LPDUs with the codec, wrapping outgoing NPDUs in Encapsulated-NPDU BVLC
+    messages and mapping BACnet addresses to 6-octet VMAC addresses.
+
+    The node is identified in the BACnet/SC network by its VMAC.  Control BVLC
+    messages (Connect, Heartbeat, ...) are handled below the codec by the hub
+    connector and do not reach this layer.
+    """
+
+    _debug: Callable[..., None]
+    _warning: Callable[..., None]
+
+    local_vmac: SecureConnectAddress
+
+    def __init__(
+        self,
+        local_vmac: SecureConnectAddress,
+        *,
+        sapID: Optional[str] = None,
+        cid: Optional[str] = None,
+        sid: Optional[str] = None,
+    ) -> None:
+        if _debug:
+            SCBVLLServiceAccessPoint._debug("__init__ %r", local_vmac)
+        Client.__init__(self, cid=cid)
+        Server.__init__(self, sid=sid)
+        ServiceAccessPoint.__init__(self, sapID=sapID)
+
+        self.local_vmac = local_vmac
+        self._message_id = 0
+
+    def _next_message_id(self) -> int:
+        message_id = self._message_id
+        self._message_id = (self._message_id + 1) & 0xFFFF
+        return message_id
+
+    async def indication(self, pdu: PDU) -> None:
+        """Downstream from the network layer: wrap the NPDU in an
+        Encapsulated-NPDU BVLC message addressed by VMAC."""
+        if _debug:
+            SCBVLLServiceAccessPoint._debug("indication %r", pdu)
+
+        destination = pdu.pduDestination
+
+        # determine the destination VMAC
+        if destination is None or destination.addrType == Address.localBroadcastAddr:
+            dest_vmac = SecureConnectAddress(SecureConnectAddress.local_broadcast)
+        elif destination.addrType == Address.localStationAddr:
+            if not destination.addrAddr or len(destination.addrAddr) != 6:
+                SCBVLLServiceAccessPoint._warning(
+                    "invalid VMAC address: %r", destination
+                )
+                return
+            dest_vmac = SecureConnectAddress(destination.addrAddr)
+        else:
+            SCBVLLServiceAccessPoint._warning(
+                "invalid destination address: %r", destination
+            )
+            return
+
+        # wrap the NPDU
+        lpdu = EncapsulatedNPDU(pdu.pduData)
+        lpdu.bvlcMessageID = self._next_message_id()
+        lpdu.bvlcDestinationVirtualAddress = dest_vmac
+        # the node is the originator, so the originating VMAC is absent; the
+        # hub function inserts it when forwarding (Clause YY.5.4)
+        lpdu.bvlcOriginatingVirtualAddress = None
+        lpdu.pduUserData = pdu.pduUserData
+        if _debug:
+            SCBVLLServiceAccessPoint._debug("    - lpdu: %r", lpdu)
+
+        # send it downstream
+        await self.request(lpdu)
+
+    async def confirmation(self, lpdu: LPDU) -> None:
+        """Upstream from the codec: unwrap Encapsulated-NPDU BVLC messages and
+        present the NPDU to the network layer."""
+        if _debug:
+            SCBVLLServiceAccessPoint._debug("confirmation %r", lpdu)
+
+        # only NPDU-bearing messages are presented to the network layer; any
+        # control message reaching this layer is unexpected and ignored
+        if not isinstance(lpdu, EncapsulatedNPDU):
+            if _debug:
+                SCBVLLServiceAccessPoint._debug("    - not an NPDU, ignored")
+            return
+
+        # the source is the originating VMAC (inserted by the hub) or, absent
+        # that, the connection peer as tagged by the transport
+        origin = lpdu.bvlcOriginatingVirtualAddress
+        if origin is not None:
+            source: Optional[Address] = SecureConnectAddress(origin.addrAddr)
+        else:
+            source = lpdu.pduSource
+
+        # a broadcast destination maps to a local broadcast, otherwise the
+        # message was addressed to this node
+        dest_vmac = lpdu.bvlcDestinationVirtualAddress
+        destination: Optional[Address]
+        if (
+            dest_vmac is not None
+            and dest_vmac.addrAddr == SecureConnectAddress.local_broadcast
+        ):
+            destination = LocalBroadcast()
+        else:
+            destination = self.local_vmac
+
+        pdu = PDU(
+            lpdu.pduData,
+            source=source,
+            destination=destination,
+            user_data=lpdu.pduUserData,
+        )
+        if _debug:
+            SCBVLLServiceAccessPoint._debug("    - pdu: %r", pdu)
+
+        # send it upstream
+        await self.response(pdu)
+
+    async def sap_indication(self, lpdu: LPDU) -> None:
+        if _debug:
+            SCBVLLServiceAccessPoint._debug("sap_indication %r", lpdu)
+
+        # a request initiated by an application service element, send downstream
+        await self.request(lpdu)
+
+    async def sap_confirmation(self, lpdu: LPDU) -> None:
+        if _debug:
+            SCBVLLServiceAccessPoint._debug("sap_confirmation %r", lpdu)
+
+        # a response from an application service element, send downstream
+        await self.request(lpdu)

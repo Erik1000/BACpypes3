@@ -39,6 +39,7 @@ from .bvll import (
     Result,
     EncapsulatedNPDU,
 )
+from .tls import require_wss
 
 
 # some debugging
@@ -1046,6 +1047,10 @@ class SCHubConnector(Server[PDU]):
         testing."""
         if _debug:
             SCHubConnector._debug("_connect %r", uri)
+
+        # BACnet/SC only permits TLS-secured connections
+        require_wss(uri)
+
         return await websockets.connect(
             uri,
             subprotocols=[websockets.Subprotocol(HUB_SUBPROTOCOL)],

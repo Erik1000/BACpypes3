@@ -3056,6 +3056,34 @@ class PropertyIdentifier(Enumerated):
     zoneFrom = 320
     zoneMembers = 165
     zoneTo = 321
+    # BACnet Secure Connect (Addendum 135-2016bj / Annex AB) and related
+    # network port properties.  The sc-* identifiers are in the ASHRAE-reserved
+    # range above the vendor range (4194304+).
+    certificateSigningRequestFile = 509
+    issuerCertificateFiles = 511
+    maxBvlcLengthAccepted = 4194304
+    maxNpduLengthAccepted = 4194305
+    operationalCertificateFile = 4194306
+    scConnectWaitTimeout = 4194308
+    scDirectConnectAcceptEnable = 4194309
+    scDirectConnectAcceptURIs = 4194310
+    scDirectConnectBinding = 4194311
+    scDirectConnectConnectionStatus = 4194312
+    scDirectConnectInitiateEnable = 4194313
+    scDisconnectWaitTimeout = 4194314
+    scFailedConnectionRequests = 4194315
+    scFailoverHubConnectionStatus = 4194316
+    scFailoverHubURI = 4194317
+    scHubConnectorState = 4194318
+    scHubFunctionAcceptURIs = 4194319
+    scHubFunctionBinding = 4194320
+    scHubFunctionConnectionStatus = 4194321
+    scHubFunctionEnable = 4194322
+    scHeartbeatTimeout = 4194323
+    scPrimaryHubConnectionStatus = 4194324
+    scPrimaryHubURI = 4194325
+    scMaximumReconnectTime = 4194326
+    scMinimumReconnectTime = 4194327
 
 
 @bacpypes_debugging

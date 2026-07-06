@@ -39,6 +39,7 @@ from .basetypes import (
     ObjectPropertyReference,
     PropertyReference,
     ProtocolLevel,
+    SCHubConnectorState,
     Segmentation,
     ServicesSupported,
 )
@@ -723,6 +724,16 @@ class Application(
                 )
                 if _debug:
                     Application._debug("     - link_layer: %r", link_layer)
+
+                # reflect the hub connector state on the network port object
+                obj.scHubConnectorState = SCHubConnectorState.noHubConnection
+
+                def _update_connector_state(code, _obj=obj):
+                    _obj.scHubConnectorState = SCHubConnectorState(code)
+
+                link_layer.connector.on_connector_state_change = (
+                    _update_connector_state
+                )
 
                 self.link_layers[obj.objectIdentifier] = link_layer
 

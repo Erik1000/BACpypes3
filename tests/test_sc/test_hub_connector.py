@@ -215,6 +215,27 @@ class TestHubConnectorFSM(unittest.IsolatedAsyncioTestCase):
         assert len(connector._conn.sent) == 1
         assert isinstance(decode(connector._conn.sent[0]), HeartbeatRequest)
 
+    async def test_connector_state_reported(self):
+        from bacpypes3.sc.service import (
+            HUB_CONNECTOR_NO_CONNECTION,
+            HUB_CONNECTOR_CONNECTED_PRIMARY,
+        )
+
+        states = []
+        connector, capture = make_connector(on_connector_state_change=states.append)
+        self.connector = connector
+        connector._conn = FakeConn()
+        connector._state = HubConnectorState.AWAITING_WEBSOCKET
+        await connector._fsm_ws_established()
+
+        # connecting on the primary hub reports connectedToPrimary
+        await connector._fsm_message(connect_accept_bytes())
+        assert states == [HUB_CONNECTOR_CONNECTED_PRIMARY]
+
+        # closing reports back to noHubConnection
+        await connector._close_connection()
+        assert states[-1] == HUB_CONNECTOR_NO_CONNECTION
+
     async def test_indication_requires_connection(self):
         connector, capture = await self._established()
 

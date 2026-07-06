@@ -721,6 +721,11 @@ class HubConnectorState(enum.Enum):
 HUB_SUBPROTOCOL = "hub.bsc.bacnet.org"
 DIRECT_CONNECT_SUBPROTOCOL = "dc.bsc.bacnet.org"
 
+# hub connector states, matching the BACnetSCHubConnectorState enumeration
+HUB_CONNECTOR_NO_CONNECTION = 0
+HUB_CONNECTOR_CONNECTED_PRIMARY = 1
+HUB_CONNECTOR_CONNECTED_FAILOVER = 2
+
 
 @bacpypes_debugging
 class SCHubConnector(Server[PDU]):
@@ -759,6 +764,7 @@ class SCHubConnector(Server[PDU]):
         minimum_reconnect_time: float = 10.0,
         maximum_reconnect_time: float = 600.0,
         on_vmac_change: Optional[Callable[[SecureConnectAddress], None]] = None,
+        on_connector_state_change: Optional[Callable[[int], None]] = None,
         sid: Optional[str] = None,
     ) -> None:
         if _debug:
@@ -770,6 +776,7 @@ class SCHubConnector(Server[PDU]):
         self.vmac = vmac
         self.device_uuid = device_uuid
         self.on_vmac_change = on_vmac_change
+        self.on_connector_state_change = on_connector_state_change
 
         # hub URIs, primary first
         self._uris = [primary_hub_uri]
@@ -788,6 +795,7 @@ class SCHubConnector(Server[PDU]):
 
         # connection state
         self._state = HubConnectorState.IDLE
+        self._connector_state_code = HUB_CONNECTOR_NO_CONNECTION
         self._conn: Any = None
         self._message_id = 0
         self._timers: Dict[str, Task] = {}
@@ -958,6 +966,13 @@ class SCHubConnector(Server[PDU]):
         self.connected.set()
         self._restart_heartbeat()
 
+        # report whether we are on the primary or failover hub
+        self._set_connector_state(
+            HUB_CONNECTOR_CONNECTED_PRIMARY
+            if self._uri_index == 0
+            else HUB_CONNECTOR_CONNECTED_FAILOVER
+        )
+
     async def _handle_result(self, lpdu: Result) -> None:
         if _debug:
             SCHubConnector._debug("_handle_result %r", lpdu)
@@ -1017,6 +1032,18 @@ class SCHubConnector(Server[PDU]):
     #   connection teardown
     #
 
+    def _set_connector_state(self, code: int) -> None:
+        """Report the hub connector state (BACnetSCHubConnectorState) to an
+        observer, e.g. the Network Port object, when it changes."""
+        if code == self._connector_state_code:
+            return
+        self._connector_state_code = code
+        if self.on_connector_state_change is not None:
+            try:
+                self.on_connector_state_change(code)
+            except Exception as err:
+                SCHubConnector._warning("connector state callback failed: %r", err)
+
     async def _close_connection(self) -> None:
         """Close the active WebSocket connection (if any) and return to IDLE."""
         if _debug:
@@ -1027,6 +1054,7 @@ class SCHubConnector(Server[PDU]):
         self.connected.clear()
         self.peer_vmac = None
         self.peer_uuid = None
+        self._set_connector_state(HUB_CONNECTOR_NO_CONNECTION)
 
         conn = self._conn
         self._conn = None

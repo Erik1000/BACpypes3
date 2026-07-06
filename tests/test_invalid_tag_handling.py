@@ -109,9 +109,7 @@ class TestUnconfirmedRequestDecodeHandling:
         asap = _make_asap()
         fake_apdu = _make_unconfirmed_apdu()
 
-        with patch.object(
-            APDU, "decode", return_value=fake_apdu
-        ), patch.object(
+        with patch.object(APDU, "decode", return_value=fake_apdu), patch.object(
             APCISequence, "decode", side_effect=InvalidTag("bad tag")
         ):
             await asap.confirmation(MagicMock())
@@ -124,10 +122,9 @@ class TestUnconfirmedRequestDecodeHandling:
         asap = _make_asap()
         fake_apdu = _make_unconfirmed_apdu()
 
-        with patch.object(
-            APDU, "decode", return_value=fake_apdu
-        ), patch.object(
-            APCISequence, "decode",
+        with patch.object(APDU, "decode", return_value=fake_apdu), patch.object(
+            APCISequence,
+            "decode",
             side_effect=DecodingError("no more packet data"),
         ):
             await asap.confirmation(MagicMock())
@@ -140,9 +137,7 @@ class TestUnconfirmedRequestDecodeHandling:
         asap = _make_asap()
         fake_apdu = _make_unconfirmed_apdu()
 
-        with patch.object(
-            APDU, "decode", return_value=fake_apdu
-        ), patch.object(
+        with patch.object(APDU, "decode", return_value=fake_apdu), patch.object(
             APCISequence, "decode", side_effect=ValueError("bad value")
         ):
             await asap.confirmation(MagicMock())
@@ -155,9 +150,7 @@ class TestUnconfirmedRequestDecodeHandling:
         asap = _make_asap()
         fake_apdu = _make_unconfirmed_apdu()
 
-        with patch.object(
-            APDU, "decode", return_value=fake_apdu
-        ), patch.object(
+        with patch.object(APDU, "decode", return_value=fake_apdu), patch.object(
             APCISequence, "decode", side_effect=AttributeError("no attr")
         ):
             await asap.confirmation(MagicMock())
@@ -188,9 +181,7 @@ class TestServerSSMRequestDecodeHandling:
         ssm = _make_server_ssm()
         apdu = MagicMock(spec=[])  # not an AbortPDU instance
 
-        with patch.object(
-            APCISequence, "decode", side_effect=InvalidTag("bad tag")
-        ):
+        with patch.object(APCISequence, "decode", side_effect=InvalidTag("bad tag")):
             await ssm.request(apdu)
 
         ssm.ssmSAP.sap_request.assert_called_once()
@@ -204,7 +195,8 @@ class TestServerSSMRequestDecodeHandling:
         apdu = MagicMock(spec=[])
 
         with patch.object(
-            APCISequence, "decode",
+            APCISequence,
+            "decode",
             side_effect=DecodingError("no more packet data"),
         ):
             await ssm.request(apdu)
@@ -250,9 +242,7 @@ class TestIPv4DatagramServerConfirmation:
     async def test_exception_in_response_is_caught(self):
         """An exception from self.response() should be caught, not propagated."""
         server = _make_ipv4_server()
-        server.response = AsyncMock(
-            side_effect=InvalidTag("bad tag in PDU")
-        )
+        server.response = AsyncMock(side_effect=InvalidTag("bad tag in PDU"))
 
         pdu = PDU(b"\x00\x01\x02")
         pdu.pduSource = IPv4Address(("10.18.2.100", 47808))

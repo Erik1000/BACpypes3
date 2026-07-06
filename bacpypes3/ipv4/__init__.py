@@ -110,7 +110,9 @@ class IPv4DatagramServer(Server[PDU]):
 
         # easy call to create a local endpoint
         local_endpoint_task = loop.create_task(
-            self.retrying_create_datagram_endpoint(loop, address.addrTuple, bind_socket=bind_socket)  # type: ignore[arg-type]
+            self.retrying_create_datagram_endpoint(
+                loop, address.addrTuple, bind_socket=bind_socket
+            )  # type: ignore[arg-type]
         )
         if _debug:
             IPv4DatagramServer._debug(
@@ -139,7 +141,7 @@ class IPv4DatagramServer(Server[PDU]):
                 if bind_socket:
                     broadcast_endpoint_task = loop.create_task(
                         self.retrying_create_datagram_endpoint(
-                            loop, address.addrBroadcastTuple, bind_socket=bind_socket 
+                            loop, address.addrBroadcastTuple, bind_socket=bind_socket
                         )
                     )
                 else:
@@ -158,7 +160,10 @@ class IPv4DatagramServer(Server[PDU]):
                 self._transport_tasks.append(broadcast_endpoint_task)
 
     async def retrying_create_datagram_endpoint(
-            self, loop: asyncio.events.AbstractEventLoop, addrTuple: Tuple[str, int], bind_socket: Optional[socket.socket] = None
+        self,
+        loop: asyncio.events.AbstractEventLoop,
+        addrTuple: Tuple[str, int],
+        bind_socket: Optional[socket.socket] = None,
     ):
         """
         Repeat attempts to create datagram endpoint, sometimes during boot
@@ -172,7 +177,10 @@ class IPv4DatagramServer(Server[PDU]):
                     )
                 reuse_port = "nt" not in os.name
                 return await loop.create_datagram_endpoint(
-                    IPv4DatagramProtocol, local_addr=addrTuple, allow_broadcast=True, reuse_port=reuse_port
+                    IPv4DatagramProtocol,
+                    local_addr=addrTuple,
+                    allow_broadcast=True,
+                    reuse_port=reuse_port,
                 )
             except OSError:
                 if _debug:

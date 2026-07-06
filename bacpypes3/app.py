@@ -731,9 +731,7 @@ class Application(
                 def _update_connector_state(code, _obj=obj):
                     _obj.scHubConnectorState = SCHubConnectorState(code)
 
-                link_layer.connector.on_connector_state_change = (
-                    _update_connector_state
-                )
+                link_layer.connector.on_connector_state_change = _update_connector_state
 
                 self.link_layers[obj.objectIdentifier] = link_layer
 

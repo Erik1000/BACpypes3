@@ -1,6 +1,7 @@
 """
 Local Object
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -555,8 +556,12 @@ class Object(_Object):
             Object._debug("write_property %r %r %r %r", attr, value, index, priority)
 
         # normalize the attribute name to its string form for monitor lookup
-        resolved_attr = attr if isinstance(attr, str) else self._property_identifier_class(attr).attr
-        
+        resolved_attr = (
+            attr
+            if isinstance(attr, str)
+            else self._property_identifier_class(attr).attr
+        )
+
         # use the same super() attribute retrieval pattern as __setattr__
         getattr_fn = partial(super().__getattribute__, resolved_attr)
         current_value = getattr_fn()
@@ -564,7 +569,7 @@ class Object(_Object):
         await super().write_property(attr, value, index, priority)
 
         new_value = getattr_fn()
-        
+
         # Trigger monitors if it's an indexed write (containers may have the same ref)
         # or if the value has changed.
         if index is not None or current_value != new_value:

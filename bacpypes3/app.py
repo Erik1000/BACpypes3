@@ -1112,7 +1112,19 @@ class Application(
         for link_layer in self.link_layers.values():
             if _debug:
                 Application._debug("    - link_layer: %r", link_layer)
-            link_layer.close()
+            result = link_layer.close()
+
+            # some link layers (e.g. BACnet/SC) close asynchronously; make sure
+            # the returned coroutine is actually awaited rather than dropped
+            if asyncio.iscoroutine(result):
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None:
+                    loop.create_task(result)
+                else:
+                    asyncio.run(result)
 
     # -----
 

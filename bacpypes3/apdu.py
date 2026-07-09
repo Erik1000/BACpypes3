@@ -1865,6 +1865,14 @@ class Error(ExecutionError, ErrorSequence):
     def __str__(self):
         return str(self.errorClass) + ": " + str(self.errorCode)
 
+    def __init__(
+        self,
+        errorClass: str,
+        errorCode: str,
+    ) -> None:
+        ErrorSequence.__init__(self)
+        ExecutionError.__init__(self, errorClass=errorClass, errorCode=errorCode)
+
 
 # see BACnet-Error
 for service_choice in {

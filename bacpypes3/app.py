@@ -29,6 +29,7 @@ from .apdu import (
     UnconfirmedRequestPDU,
     confirmed_request_types,
     unconfirmed_request_types,
+    ErrorSequence,
 )
 from .appservice import ApplicationServiceAccessPoint
 from .basetypes import (
@@ -1259,6 +1260,15 @@ class Application(
                 errorCode=err.errorCode,
                 context=apdu,
             )
+
+        # error sequences are all errors that shouldbe responeded but they
+        # no not inherit ExecutionError nor any other type except BaseExeception
+        # they are a kind of exeception that wrap another error inside
+        except ErrorSequence as err:
+            if _debug:
+                Application._debug("    - execution error: %r", err)
+            # an error sequence can be directly encoded
+            error_pdu = err
 
         except Exception as err:
             Application._exception("exception: %r", err)

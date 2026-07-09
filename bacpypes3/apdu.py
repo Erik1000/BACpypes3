@@ -52,7 +52,7 @@ from .basetypes import (
 )
 from .constructeddata import Any, Sequence, SequenceOf
 from .debugging import DebugContents, ModuleLogger, bacpypes_debugging
-from .errors import DecodingError, ExecutionError, ServicesError
+from .errors import DecodingError
 from .pdu import PCI, PDU, PDUData
 from .primitivedata import (
     Boolean,
@@ -1858,8 +1858,6 @@ class VTOpenACK(ComplexAckSequence):
 
 
 class Error(ErrorSequence):
-    """Error type used to encode packets."""
-
     _order = ("errorClass", "errorCode")
     errorClass = ErrorClass()
     errorCode = ErrorCode()
@@ -1898,7 +1896,7 @@ for service_choice in {
     )
 
 
-class ChangeListError(Error):
+class ChangeListError(ErrorSequence):
     _order = ("errorType", "firstFailedElementNumber")
     errorType = ErrorType(_context=0)
     firstFailedElementNumber = Unsigned(_context=1)
@@ -1909,7 +1907,7 @@ error_types[9] = ChangeListError
 
 
 @register_error_type
-class ConfirmedPrivateTransferError(Error):
+class ConfirmedPrivateTransferError(ErrorSequence):
     service_choice = ConfirmedServiceChoice.confirmedPrivateTransfer
     _order = ("errorType", "vendorID", "serviceNumber", "errorParameters")
     errorType = ErrorType(_context=0)
@@ -1922,7 +1920,7 @@ error_types[18] = ConfirmedPrivateTransferError
 
 
 @register_error_type
-class CreateObjectError(Error):
+class CreateObjectError(ErrorSequence):
     service_choice = ConfirmedServiceChoice.createObject
     _order = ("errorType", "firstFailedElementNumber")
     errorType = ErrorType(_context=0)
@@ -1933,39 +1931,22 @@ error_types[10] = CreateObjectError
 
 
 @register_error_type
-class VTCloseError(Error):
-    service_choice: int = ConfirmedServiceChoice.vtClose
+class VTCloseError(ErrorSequence):
+    service_choice = ConfirmedServiceChoice.vtClose
     _order = ("errorType", "listOfVTSessionIdentifiers")
     errorType = ErrorType(_context=0)
     listOfVTSessionIdentifiers = SequenceOf(Unsigned, _context=1, _optional=True)
-
-    def __init__(self, errorCode: str) -> None:
-        Error.__init__(self, errorClass="vt", errorCode=errorCode)
 
 
 error_types[22] = VTCloseError
 
 
 @register_error_type
-class WritePropertyMultipleError(Error):
-    """An error inside a WritePropertyMultipleRequest.
-
-    It may be of class `services`, `property` or something else.
-    """
-
+class WritePropertyMultipleError(ErrorSequence):
     service_choice = ConfirmedServiceChoice.writePropertyMultiple
     _order = ("errorType", "firstFailedWriteAttempt")
     errorType = ErrorType(_context=0)
     firstFailedWriteAttempt = ObjectPropertyReference(_context=1)
-
-    def __init__(
-        self,
-        errorClass: str,
-        errorCode: str,
-        firstFailedWriteAttempt: ObjectPropertyReference,
-    ) -> None:
-        self.firstFailedWriteAttempt = firstFailedWriteAttempt
-        Error.__init__(self, errorClass=errorClass, errorCode=errorCode)
 
 
 error_types[16] = WritePropertyMultipleError

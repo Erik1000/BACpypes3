@@ -977,13 +977,9 @@ class ReadWritePropertyMultipleServices:
                     if property_array_index is not None:
                         obj_prop_ref.propertyArrayIndex = property_array_index
                     raise WritePropertyMultipleError(
+                        # the errorClass is transfered from the wrapped error
                         errorClass=err.errorClass,
                         errorCode=err.errorCode,
-                        # the error class is services because this error happened
-                        # inside a write request multiple.
-                        # even a PropertyError is still part of the services
-                        # and therefore wrapped
-                        # errorClass=err.errorClass,
                         firstFailedWriteAttempt=obj_prop_ref,
                     )
 

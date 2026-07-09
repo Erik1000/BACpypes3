@@ -1963,6 +1963,7 @@ class WritePropertyMultipleError(Error):
         firstFailedWriteAttempt: ObjectPropertyReference,
     ) -> None:
         self.firstFailedWriteAttempt = firstFailedWriteAttempt
+        self.apduType = ErrorPDU.pduType
         Error.__init__(self, errorClass=errorClass, errorCode=errorCode)
 
 

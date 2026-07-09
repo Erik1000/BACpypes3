@@ -34,7 +34,6 @@ from ..basetypes import (
     ReadAccessResultElementChoice,
     ReadAccessSpecification,
     ObjectPropertyReference,
-    ErrorCode,
 )
 from ..constructeddata import Any, Array, List, SequenceOf
 from ..debugging import ModuleLogger, bacpypes_debugging
@@ -928,11 +927,12 @@ class ReadWritePropertyMultipleServices:
 
             obj = self.get_object_id(object_identifier)
             if not obj:
+                error_type = ErrorType(errorClass="object", errorCode="unknownObject")
                 obj_prop_ref = ObjectPropertyReference(
                     objectIdentifier=object_identifier
                 )
                 raise WritePropertyMultipleError(
-                    errorCode=ErrorCode.unknownObject,
+                    errorType=error_type,
                     firstFailedWriteAttempt=obj_prop_ref,
                 )
 
@@ -943,6 +943,9 @@ class ReadWritePropertyMultipleServices:
 
                 property_type = obj.get_property_type(property_identifier)
                 if not property_type:
+                    error_type = ErrorType(
+                        errorClass="property", errorCode="unknownProperty"
+                    )
                     obj_prop_ref = ObjectPropertyReference(
                         objectIdentifier=object_identifier,
                         propertyIdentifier=property_identifier,
@@ -950,7 +953,7 @@ class ReadWritePropertyMultipleServices:
                     if property_array_index is not None:
                         obj_prop_ref.propertyArrayIndex = property_array_index
                     raise WritePropertyMultipleError(
-                        errorCode=ErrorCode.unknownProperty,
+                        errorType=error_type,
                         firstFailedWriteAttempt=obj_prop_ref,
                     )
 
@@ -970,6 +973,9 @@ class ReadWritePropertyMultipleServices:
                         property_identifier, value, property_array_index, priority
                     )
                 except ExecutionError as err:
+                    error_type = ErrorType(
+                        errorClass=err.errorClass, errorCode=err.errorCode
+                    )
                     obj_prop_ref = ObjectPropertyReference(
                         objectIdentifier=object_identifier,
                         propertyIdentifier=property_identifier,
@@ -977,9 +983,7 @@ class ReadWritePropertyMultipleServices:
                     if property_array_index is not None:
                         obj_prop_ref.propertyArrayIndex = property_array_index
                     raise WritePropertyMultipleError(
-                        # the errorClass is transfered from the wrapped error
-                        errorClass=err.errorClass,
-                        errorCode=err.errorCode,
+                        errorType=error_type,
                         firstFailedWriteAttempt=obj_prop_ref,
                     )
 

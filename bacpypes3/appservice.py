@@ -1510,7 +1510,16 @@ class ServerSSM(SSM):
         if self.segmentRetryCount < self.numberOfApduRetries:
             self.segmentRetryCount += 1
             self.start_timer(self.segmentTimeout)
-            await self.fill_window(self.initialSequenceNumber)
+
+            # if the client has not acknowledged the first segment yet the
+            # window size has not been negotiated (actualWindowSize is still
+            # None), so fill_window() would assert.  Mirror the client-side
+            # segmented_request_timeout() behaviour and simply resend the
+            # first segment until a SegmentAck sets the window size.
+            if self.initialSequenceNumber == 0:
+                await self.response(self.get_segment(0))
+            else:
+                await self.fill_window(self.initialSequenceNumber)
         else:
             # give up
             self.set_state(ABORTED)

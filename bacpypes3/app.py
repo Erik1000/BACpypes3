@@ -1251,16 +1251,14 @@ class Application(
                 Application._debug("    - abort exception: %r", err)
             error_pdu = AbortPDU(reason=err.abortReason, context=apdu)
 
-        # error sequences are all errors that shouldbe responeded but they
-        # no not inherit ExecutionError nor any other type except BaseExeception
-        # they are a kind of exeception that wrap another error inside
+        # ErrorSequence instances are APDUs that still need response context
+        # (destination, invoke ID) from the incoming request.
         except ErrorSequence as err:
             if _debug:
                 Application._debug("    - error sequence: %r", err)
-            # an error sequence can be directly encoded
             error_pdu = err
-            error_pdu.context = apdu
-            error_pdu.service_choice = apdu.apduService
+            error_pdu.set_context(apdu)
+            error_pdu.apduService = apdu.apduService
 
         except ExecutionError as err:
             if _debug:

@@ -1857,21 +1857,15 @@ class VTOpenACK(ComplexAckSequence):
 #
 
 
-class Error(ExecutionError, ErrorSequence):
+class Error(ErrorSequence):
+    """Error type used to encode packets."""
+
     _order = ("errorClass", "errorCode")
     errorClass = ErrorClass()
     errorCode = ErrorCode()
 
     def __str__(self):
         return str(self.errorClass) + ": " + str(self.errorCode)
-
-    def __init__(
-        self,
-        errorClass: str,
-        errorCode: str,
-    ) -> None:
-        ErrorSequence.__init__(self)
-        ExecutionError.__init__(self, errorClass=errorClass, errorCode=errorCode)
 
 
 # see BACnet-Error
@@ -1904,7 +1898,7 @@ for service_choice in {
     )
 
 
-class ChangeListError(ServicesError, Error):
+class ChangeListError(Error):
     _order = ("errorType", "firstFailedElementNumber")
     errorType = ErrorType(_context=0)
     firstFailedElementNumber = Unsigned(_context=1)
@@ -1915,7 +1909,7 @@ error_types[9] = ChangeListError
 
 
 @register_error_type
-class ConfirmedPrivateTransferError(ServicesError, Error):
+class ConfirmedPrivateTransferError(Error):
     service_choice = ConfirmedServiceChoice.confirmedPrivateTransfer
     _order = ("errorType", "vendorID", "serviceNumber", "errorParameters")
     errorType = ErrorType(_context=0)
@@ -1971,7 +1965,6 @@ class WritePropertyMultipleError(Error):
         firstFailedWriteAttempt: ObjectPropertyReference,
     ) -> None:
         self.firstFailedWriteAttempt = firstFailedWriteAttempt
-        self.apduType = ErrorPDU.pduType
         Error.__init__(self, errorClass=errorClass, errorCode=errorCode)
 
 

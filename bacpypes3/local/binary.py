@@ -69,7 +69,7 @@ class BinaryInputObjectIR(BinaryInputObject):
     _optional = (  # footnote 7
         "eventMessageTexts",
         "eventMessageTextsConfig",
-        "eventAlgorithmInhibitReference",
+        "eventAlgorithmInhibitRef",
         "timeDelayNormal",
     )
 
@@ -124,7 +124,7 @@ class BinaryOutputObjectIR(BinaryOutputObject):
     _optional = (  # footnote 6
         "eventMessageTexts",
         "eventMessageTextsConfig",
-        "eventAlgorithmInhibitReference",
+        "eventAlgorithmInhibitRef",
         "timeDelayNormal",
     )
 
@@ -184,7 +184,7 @@ class BinaryValueObjectIR(BinaryValueObjectCmd):
     _optional = (  # footnote 8
         "eventMessageTexts",
         "eventMessageTextsConfig",
-        "eventAlgorithmInhibitReference",
+        "eventAlgorithmInhibitRef",
         "timeDelayNormal",
     )
 

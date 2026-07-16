@@ -266,7 +266,7 @@ async def main() -> None:
             #     "to normal",
             # ],
             eventDetectionEnable=True,
-            # eventAlgorithmInhibitReference=ObjectPropertyReference
+            # eventAlgorithmInhibitRef=ObjectPropertyReference
             eventAlgorithmInhibit=False,
             timeDelayNormal=2,
         )

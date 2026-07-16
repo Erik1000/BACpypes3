@@ -70,7 +70,7 @@ class AnalogInputObjectIR(AnalogInputObject):
     _optional = (  # footnote 5
         "eventMessageTexts",
         "eventMessageTextsConfig",
-        "eventAlgorithmInhibitReference",
+        "eventAlgorithmInhibitRef",
         "timeDelayNormal",
     )
 
@@ -144,7 +144,7 @@ class AnalogOutputObjectIR(AnalogOutputObject):
     _optional = (  # footnote 4
         "eventMessageTexts",
         "eventMessageTextsConfig",
-        "eventAlgorithmInhibitReference",
+        "eventAlgorithmInhibitRef",
         "timeDelayNormal",
     )
 
@@ -205,7 +205,7 @@ class AnalogValueObjectIR(AnalogValueObjectCmd):
     _optional = (  # footnote 6
         "eventMessageTexts",
         "eventMessageTextsConfig",
-        "eventAlgorithmInhibitReference",
+        "eventAlgorithmInhibitRef",
         "timeDelayNormal",
     )
 

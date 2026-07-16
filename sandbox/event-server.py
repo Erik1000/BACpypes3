@@ -374,7 +374,7 @@ async def main() -> None:
             #     "to normal",
             # ],
             eventDetectionEnable=True,
-            # eventAlgorithmInhibitReference=ObjectPropertyReference
+            # eventAlgorithmInhibitRef=ObjectPropertyReference
             eventAlgorithmInhibit=False,
             timeDelayNormal=2,
         )
@@ -434,7 +434,7 @@ async def main() -> None:
             #     "to normal config",
             # ],
             eventDetectionEnable=True,
-            # eventAlgorithmInhibitReference=ObjectPropertyReference
+            # eventAlgorithmInhibitRef=ObjectPropertyReference
             # eventAlgorithmInhibit=False,
             # statusFlags=[0, 0, 0, 0],  # inAlarm, fault, overridden, outOfService
             reliability=Reliability.noFaultDetected,
@@ -501,7 +501,7 @@ async def main() -> None:
             #     "to normal config",
             # ],
             eventDetectionEnable=True,
-            # eventAlgorithmInhibitReference=ObjectPropertyReference
+            # eventAlgorithmInhibitRef=ObjectPropertyReference
             # eventAlgorithmInhibit=False,
             # statusFlags=[0, 0, 0, 0],  # inAlarm, fault, overridden, outOfService
             reliability=Reliability.noFaultDetected,

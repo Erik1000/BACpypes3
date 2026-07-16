@@ -223,6 +223,15 @@ class EventAlgorithm(Algorithm, DebugContents):
                     f"eventAlgorithmInhibitRef object not found: {eair.objectIdentifier}"
                 )
 
+            # normalize propertyIdentifier to an object attribute name
+            inhibit_ref_property_identifier = eair.propertyIdentifier
+            if isinstance(inhibit_ref_property_identifier, int):
+                inhibit_ref_property_identifier = PropertyIdentifier(
+                    inhibit_ref_property_identifier
+                ).attr
+            elif isinstance(inhibit_ref_property_identifier, PropertyIdentifier):
+                inhibit_ref_property_identifier = inhibit_ref_property_identifier.attr
+
             # cascade changes to the config object
             def cascade_algorithm_inhibit(old_value, new_value):
                 if _debug:
@@ -233,8 +242,15 @@ class EventAlgorithm(Algorithm, DebugContents):
                 setattr(config_object, "eventAlgorithmInhibit", new_value)
 
             # add the property value monitor function
-            eair_object._property_monitors[eair.propertyIdentifier].append(
+            eair_object._property_monitors[inhibit_ref_property_identifier].append(
                 cascade_algorithm_inhibit
+            )
+
+            # initialize inhibit state from the current referenced value
+            setattr(
+                config_object,
+                "eventAlgorithmInhibit",
+                getattr(eair_object, inhibit_ref_property_identifier),
             )
 
     def _execute(self):

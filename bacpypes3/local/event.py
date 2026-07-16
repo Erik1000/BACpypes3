@@ -573,6 +573,18 @@ class EventAlgorithm(Algorithm, DebugContents):
         time_stamp = TimeStamp.as_dateTime()
         event_initiating_object.eventTimeStamps[new_state_index] = time_stamp
 
+        # Per ASHRAE 135 §13.2.3: when a transition is reported and
+        # Ack_Required is TRUE for that transition, clear the corresponding
+        # flag in Acked_Transitions (FALSE = unacknowledged, pending ack).
+        # Transitions with Ack_Required=FALSE stay auto-acknowledged (TRUE).
+        ack_required = event_initiating_object._notification_class_object.ackRequired[
+            new_state_index
+        ]
+        if ack_required:
+            acked_bits = list(event_initiating_object.ackedTransitions)
+            acked_bits[new_state_index] = 0
+            event_initiating_object.ackedTransitions = EventTransitionBits(acked_bits)
+
         # store text in eventMessageTexts if present
         message_text: Optional[str]
         if event_initiating_object.eventMessageTexts:

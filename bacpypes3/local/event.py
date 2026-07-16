@@ -187,6 +187,22 @@ class EventAlgorithm(Algorithm, DebugContents):
         # continue with binding
         super().bind(**kwargs)
 
+    def resolve_references(self) -> None:
+        """
+        Resolve references to other objects that can only be looked up once the
+        owning object has been added to an application.
+
+        This is called from the object's ``_post_init()`` so that ``_app`` (and
+        the referenced objects) are available.  It must not run during
+        ``bind()`` because, for intrinsic reporting, the algorithm is created in
+        the monitored object's ``__init__`` before it has been added to the
+        application, so ``_app`` is still ``None`` at that point.
+        """
+        if _debug:
+            EventAlgorithm._debug("resolve_references")
+
+        config_object = self.monitoring_object or self.monitored_object
+
         # check for event algorithm inhibit reference
         eair: Optional[ObjectPropertyReference] = getattr(
             config_object, "eventAlgorithmInhibitRef", None
@@ -2487,6 +2503,14 @@ class EventEnrollmentObject(Object, _EventEnrollmentObject):
                 "    - _event_algorithm: %r",
                 self._event_algorithm,
             )
+
+        # the algorithms are created here (after super()._post_init() has already
+        # run), so complete their deferred reference bindings explicitly now that
+        # self._app and the monitored object are available
+        if self._fault_algorithm is not None:
+            self._fault_algorithm.resolve_references()
+        if self._event_algorithm is not None:
+            self._event_algorithm.resolve_references()
 
     @property
     def reliability(self) -> Reliability:

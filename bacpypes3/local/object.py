@@ -247,6 +247,16 @@ class Algorithm:
         if _debug:
             Algorithm._debug("init")
 
+    def resolve_references(self) -> None:
+        """
+        Resolve references to other objects that can only be looked up once the
+        owning object has been added to an application.  The base implementation
+        does nothing; algorithms that reference other objects override this and
+        it is invoked from the owning object's ``_post_init()``.
+        """
+        if _debug:
+            Algorithm._debug("resolve_references")
+
     def _execute(self):
         if _debug:
             Algorithm._debug("_execute")
@@ -428,6 +438,13 @@ class Object(_Object):
                     "    - notification class object: %r",
                     self._notification_class_object.objectIdentifier,
                 )
+
+        # complete deferred algorithm reference bindings now that this object
+        # has been added to the application and self._app is available
+        if self._event_algorithm is not None:
+            self._event_algorithm.resolve_references()
+        if self._fault_algorithm is not None:
+            self._fault_algorithm.resolve_references()
 
     def __getattribute__(self, attr: str) -> _Any:
         if attr.startswith("_") or (attr not in self._elements):

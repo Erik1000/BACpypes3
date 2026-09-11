@@ -11,11 +11,12 @@ IPv4 NormalLinkLayer and is the object the NetworkServiceAccessPoint binds to.
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from ..debugging import bacpypes_debugging, ModuleLogger
 
 from ..comm import bind
+from ..netservice import NetworkAdapter
 from ..pdu import SecureConnectAddress
 
 from .bvll import BVLLCodec
@@ -50,6 +51,7 @@ class SCNodeLinkLayer(SCBVLLServiceAccessPoint):
         failover_hub_uri: Optional[str] = None,
         *,
         ssl_context: Any = None,
+        on_vmac_change: Optional[Callable[[SecureConnectAddress], None]] = None,
         **kwargs: Any,
     ) -> None:
         if _debug:
@@ -61,6 +63,7 @@ class SCNodeLinkLayer(SCBVLLServiceAccessPoint):
                 failover_hub_uri,
             )
         SCBVLLServiceAccessPoint.__init__(self, vmac)
+        self.on_vmac_change = on_vmac_change
 
         # create the codec and hub connector
         self.codec = BVLLCodec()
@@ -83,6 +86,10 @@ class SCNodeLinkLayer(SCBVLLServiceAccessPoint):
         if _debug:
             SCNodeLinkLayer._debug("_vmac_changed %r", vmac)
         self.local_vmac = vmac
+        if isinstance(self.serverPeer, NetworkAdapter):
+            self.serverPeer.adapterAddr = vmac
+        if self.on_vmac_change is not None:
+            self.on_vmac_change(vmac)
 
     def start(self) -> None:
         """Start maintaining the hub connection."""

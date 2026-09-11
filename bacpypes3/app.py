@@ -716,12 +716,29 @@ class Application(
                 # underscore stores it as plain data outside the property system
                 ssl_context = getattr(obj, "_ssl_context", None)
 
+                timing_options = {}
+                for property_name, parameter_name in (
+                    ("scMinimumReconnectTime", "minimum_reconnect_time"),
+                    ("scMaximumReconnectTime", "maximum_reconnect_time"),
+                    ("scConnectWaitTimeout", "connect_wait_timeout"),
+                    ("scDisconnectWaitTimeout", "disconnect_wait_timeout"),
+                    ("scHeartbeatTimeout", "heartbeat_timeout"),
+                ):
+                    value = getattr(obj, property_name, None)
+                    if value is not None:
+                        timing_options[parameter_name] = float(value)
+
+                def _update_vmac(vmac, _obj=obj):
+                    _obj.macAddress = vmac.addrAddr
+
                 link_layer = SCNodeLinkLayer(
                     link_address,
                     device_uuid,
                     primary_hub_uri,
                     failover_hub_uri,
                     ssl_context=ssl_context,
+                    on_vmac_change=_update_vmac,
+                    **timing_options,
                 )
                 if _debug:
                     Application._debug("     - link_layer: %r", link_layer)
@@ -731,6 +748,11 @@ class Application(
 
                 def _update_connector_state(code, _obj=obj):
                     _obj.scHubConnectorState = SCHubConnectorState(code)
+                    if code in (
+                        SCHubConnectorState.connectedToPrimary,
+                        SCHubConnectorState.connectedToFailover,
+                    ):
+                        self.i_am()
 
                 link_layer.connector.on_connector_state_change = _update_connector_state
 

@@ -727,6 +727,12 @@ HUB_CONNECTOR_CONNECTED_PRIMARY = 1
 HUB_CONNECTOR_CONNECTED_FAILOVER = 2
 
 
+class _HubConnectionRejected(Exception):
+    def __init__(self, result: Result) -> None:
+        super().__init__(f"hub rejected Connect-Request: {result.error_code}")
+        self.result = result
+
+
 @bacpypes_debugging
 class SCHubConnector(Server[PDU]):
     """
@@ -791,7 +797,9 @@ class SCHubConnector(Server[PDU]):
         self.heartbeat_timeout = heartbeat_timeout
         self.disconnect_wait_timeout = disconnect_wait_timeout
         self.minimum_reconnect_time = minimum_reconnect_time
-        self.maximum_reconnect_time = maximum_reconnect_time
+        self.maximum_reconnect_time = min(maximum_reconnect_time, 600.0)
+        self._retry_at = [0.0 for uri in self._uris]
+        self._retry_delay = [minimum_reconnect_time for uri in self._uris]
 
         # connection state
         self._state = HubConnectorState.IDLE
@@ -799,6 +807,7 @@ class SCHubConnector(Server[PDU]):
         self._conn: Any = None
         self._message_id = 0
         self._timers: Dict[str, Task] = {}
+        self._heartbeat_message_id: Optional[int] = None
 
         # information learned from the hub in the Connect-Accept
         self.peer_vmac: Optional[SecureConnectAddress] = None
@@ -810,6 +819,9 @@ class SCHubConnector(Server[PDU]):
         # lifecycle
         self._closing = False
         self._run_task: Optional[Task] = None
+        self._socket_close_task: Optional[Task] = None
+        self._disconnected = asyncio.Event()
+        self._disconnected.set()
 
     #
     #   message id and encoding helpers
@@ -856,7 +868,7 @@ class SCHubConnector(Server[PDU]):
 
     def _cancel_timer(self, name: str) -> None:
         task = self._timers.pop(name, None)
-        if task is not None:
+        if task is not None and task is not asyncio.current_task():
             task.cancel()
 
     def _cancel_all_timers(self) -> None:
@@ -892,6 +904,15 @@ class SCHubConnector(Server[PDU]):
         if _debug:
             SCHubConnector._debug("_fsm_ws_established")
 
+        request = self._connect_request()
+        await self._send(request)
+
+        self._state = HubConnectorState.AWAITING_ACCEPT
+        self._start_timer(
+            "connect_wait", self.connect_wait_timeout, self._fsm_connect_wait_timeout
+        )
+
+    def _connect_request(self) -> ConnectRequest:
         request = ConnectRequest(
             vmac_address=VirtualAddress(self.vmac.addrAddr),
             device_uuid=self.device_uuid,
@@ -899,12 +920,7 @@ class SCHubConnector(Server[PDU]):
             maximum_npdu_length=self.maximum_npdu_length,
         )
         request.bvlcMessageID = self._next_message_id()
-        await self._send(request)
-
-        self._state = HubConnectorState.AWAITING_ACCEPT
-        self._start_timer(
-            "connect_wait", self.connect_wait_timeout, self._fsm_connect_wait_timeout
-        )
+        return request
 
     async def _fsm_connect_wait_timeout(self) -> None:
         if _debug:
@@ -923,7 +939,8 @@ class SCHubConnector(Server[PDU]):
 
         # NPDU-bearing messages go straight up to the codec/SAP
         if function == LPCI.encapsulatedNPDU:
-            await self.response(PDU(bytes(data)))
+            if self._state == HubConnectorState.CONNECTED:
+                await self.response(PDU(bytes(data), source=self.peer_vmac))
             return
 
         try:
@@ -941,7 +958,10 @@ class SCHubConnector(Server[PDU]):
         elif isinstance(lpdu, HeartbeatRequest):
             await self._handle_heartbeat_request(lpdu)
         elif isinstance(lpdu, HeartbeatACK):
-            pass  # liveness already recorded
+            if lpdu.bvlcMessageID == self._heartbeat_message_id:
+                self._heartbeat_message_id = None
+                self._cancel_timer("heartbeat_ack")
+                self._restart_heartbeat()
         elif isinstance(lpdu, DisconnectRequest):
             await self._handle_disconnect_request(lpdu)
         elif isinstance(lpdu, DisconnectACK):
@@ -963,6 +983,7 @@ class SCHubConnector(Server[PDU]):
         self.peer_uuid = lpdu.device_uuid
 
         self._state = HubConnectorState.CONNECTED
+        self._disconnected.clear()
         self.connected.set()
         self._restart_heartbeat()
 
@@ -1014,19 +1035,47 @@ class SCHubConnector(Server[PDU]):
     #
 
     def _restart_heartbeat(self) -> None:
-        if self._state != HubConnectorState.CONNECTED:
+        if (
+            self._state != HubConnectorState.CONNECTED
+            or self._heartbeat_message_id is not None
+        ):
             return
         self._start_timer("heartbeat", self.heartbeat_timeout, self._fsm_heartbeat)
 
     async def _fsm_heartbeat(self) -> None:
-        if self._state != HubConnectorState.CONNECTED:
+        if (
+            self._state != HubConnectorState.CONNECTED
+            or self._heartbeat_message_id is not None
+        ):
             return
         if _debug:
             SCHubConnector._debug("_fsm_heartbeat")
         request = HeartbeatRequest()
         request.bvlcMessageID = self._next_message_id()
-        await self._send(request)
-        self._start_timer("heartbeat", self.heartbeat_timeout, self._fsm_heartbeat)
+        self._heartbeat_message_id = request.bvlcMessageID
+        self._start_timer(
+            "heartbeat_ack", self.heartbeat_timeout, self._local_disconnect
+        )
+        try:
+            await self._send(request)
+        except Exception:
+            await self._close_connection()
+
+    async def _local_disconnect(self) -> None:
+        if self._state != HubConnectorState.CONNECTED:
+            return
+        self._cancel_all_timers()
+        self._state = HubConnectorState.DISCONNECTING
+        self.connected.clear()
+        self._start_timer(
+            "disconnect_wait", self.disconnect_wait_timeout, self._close_connection
+        )
+        request = DisconnectRequest()
+        request.bvlcMessageID = self._next_message_id()
+        try:
+            await self._send(request)
+        except Exception:
+            await self._close_connection()
 
     #
     #   connection teardown
@@ -1050,6 +1099,7 @@ class SCHubConnector(Server[PDU]):
             SCHubConnector._debug("_close_connection")
 
         self._cancel_all_timers()
+        self._heartbeat_message_id = None
         self._state = HubConnectorState.IDLE
         self.connected.clear()
         self.peer_vmac = None
@@ -1059,10 +1109,21 @@ class SCHubConnector(Server[PDU]):
         conn = self._conn
         self._conn = None
         if conn is not None:
-            try:
-                await conn.close()
-            except Exception:
-                pass
+            self._socket_close_task = asyncio.ensure_future(self._close_socket(conn))
+        close_task = self._socket_close_task
+        if close_task is not None:
+            await asyncio.shield(close_task)
+            if self._socket_close_task is close_task:
+                self._socket_close_task = None
+        self._disconnected.set()
+
+    async def _close_socket(self, conn: Any) -> None:
+        try:
+            await asyncio.wait_for(conn.close(), self.disconnect_wait_timeout)
+        except Exception:
+            transport = getattr(conn, "transport", None)
+            if transport is not None:
+                transport.abort()
 
     #
     #   WebSocket transport
@@ -1081,7 +1142,66 @@ class SCHubConnector(Server[PDU]):
             uri,
             subprotocols=[websockets.Subprotocol(HUB_SUBPROTOCOL)],
             ssl=self.ssl_context,
+            open_timeout=self.connect_wait_timeout,
+            close_timeout=self.disconnect_wait_timeout,
         )
+
+    async def _open_connection(self, uri: str) -> Tuple[Any, ConnectAccept]:
+        conn = await asyncio.wait_for(self._connect(uri), self.connect_wait_timeout)
+
+        async def establish() -> ConnectAccept:
+            request = self._connect_request()
+            await conn.send(bytes(request.encode().pduData))
+            while True:
+                data = await conn.recv()
+                if not isinstance(data, bytes):
+                    raise ValueError("BACnet/SC requires binary WebSocket messages")
+                lpdu = self._decode(data)
+                if lpdu.bvlcMessageID != request.bvlcMessageID:
+                    continue
+                if isinstance(lpdu, ConnectAccept):
+                    return lpdu
+                if (
+                    isinstance(lpdu, Result)
+                    and lpdu.result_function == LPCI.connectRequest
+                    and lpdu.result_code != 0
+                ):
+                    raise _HubConnectionRejected(lpdu)
+
+        try:
+            accept = await asyncio.wait_for(establish(), self.connect_wait_timeout)
+        except BaseException:
+            await self._close_socket(conn)
+            raise
+        return conn, accept
+
+    async def _wait_to_retry(self, index: int) -> None:
+        delay = self._retry_at[index] - asyncio.get_running_loop().time()
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    def _connection_failed(self, index: int) -> None:
+        self._retry_at[index] = (
+            asyncio.get_running_loop().time() + self._retry_delay[index]
+        )
+        self._retry_delay[index] = min(
+            self._retry_delay[index] * 2, self.maximum_reconnect_time
+        )
+
+    async def _restore_primary(self) -> Tuple[Any, ConnectAccept]:
+        while True:
+            await self._wait_to_retry(0)
+            try:
+                return await self._open_connection(self._uris[0])
+            except Exception as err:
+                SCHubConnector._warning("primary reconnect failed: %r", err)
+                self._connection_failed(0)
+
+    async def _receive_messages(self, conn: Any) -> None:
+        async for message in conn:
+            if not isinstance(message, bytes):
+                raise ValueError("BACnet/SC requires binary WebSocket messages")
+            await self._fsm_message(message)
 
     def _current_uri(self) -> str:
         return self._uris[self._uri_index % len(self._uris)]
@@ -1098,38 +1218,71 @@ class SCHubConnector(Server[PDU]):
             self._run_task = asyncio.ensure_future(self._run())
 
     async def _run(self) -> None:
-        backoff = self.minimum_reconnect_time
-        while not self._closing:
-            uri = self._current_uri()
-            self._state = HubConnectorState.AWAITING_WEBSOCKET
-            try:
-                conn = await self._connect(uri)
-            except Exception as err:
-                SCHubConnector._warning("connect to %s failed: %r", uri, err)
-                self._state = HubConnectorState.IDLE
-                self._advance_uri()
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, self.maximum_reconnect_time)
-                continue
+        replacement: Optional[Tuple[Any, ConnectAccept]] = None
+        try:
+            while not self._closing:
+                index = self._uri_index
+                uri = self._current_uri()
+                if replacement is None:
+                    self._state = HubConnectorState.AWAITING_WEBSOCKET
+                    await self._wait_to_retry(index)
+                    try:
+                        conn, accept = await self._open_connection(uri)
+                    except Exception as err:
+                        SCHubConnector._warning("connect to %s failed: %r", uri, err)
+                        self._state = HubConnectorState.IDLE
+                        self._connection_failed(index)
+                        if isinstance(err, _HubConnectionRejected):
+                            await self._handle_result(err.result)
+                        self._advance_uri()
+                        continue
+                else:
+                    conn, accept = replacement
+                    replacement = None
 
-            self._conn = conn
-            backoff = self.minimum_reconnect_time
-            try:
-                await self._fsm_ws_established()
-                async for message in conn:
-                    if isinstance(message, str):
-                        message = message.encode()
-                    await self._fsm_message(message)
-            except asyncio.CancelledError:
-                raise
-            except Exception as err:
-                if _debug:
-                    SCHubConnector._debug("    - connection ended: %r", err)
-            finally:
-                await self._close_connection()
-
-            if not self._closing:
-                await asyncio.sleep(backoff)
+                self._conn = conn
+                self._state = HubConnectorState.AWAITING_ACCEPT
+                self._retry_delay[index] = self.minimum_reconnect_time
+                self._retry_at[index] = (
+                    asyncio.get_running_loop().time() + self.minimum_reconnect_time
+                )
+                await self._handle_connect_accept(accept)
+                receiver = asyncio.ensure_future(self._receive_messages(conn))
+                primary = (
+                    asyncio.ensure_future(self._restore_primary()) if index else None
+                )
+                tasks = [receiver] if primary is None else [receiver, primary]
+                try:
+                    done, pending = await asyncio.wait(
+                        tasks, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if primary is not None and primary in done:
+                        replacement = primary.result()
+                        await self._local_disconnect()
+                        await self._disconnected.wait()
+                    else:
+                        receiver.result()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as err:
+                    SCHubConnector._warning("connection to %s ended: %r", uri, err)
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    if (
+                        primary is not None
+                        and not primary.cancelled()
+                        and primary.exception() is None
+                        and replacement is None
+                    ):
+                        await self._close_socket(primary.result()[0])
+                    await self._close_connection()
+                self._uri_index = 0
+        finally:
+            if replacement is not None:
+                await self._close_socket(replacement[0])
+            await self._close_connection()
 
     async def close(self) -> None:
         """Gracefully disconnect and stop maintaining the connection."""
@@ -1137,18 +1290,12 @@ class SCHubConnector(Server[PDU]):
             SCHubConnector._debug("close")
 
         self._closing = True
-
-        # attempt a graceful disconnect
-        if self._state == HubConnectorState.CONNECTED and self._conn is not None:
-            request = DisconnectRequest()
-            request.bvlcMessageID = self._next_message_id()
-            try:
-                await self._send(request)
-            except Exception:
-                pass
-
-        await self._close_connection()
-
-        if self._run_task is not None:
-            self._run_task.cancel()
+        task = self._run_task
+        if task is not None:
+            if self._state == HubConnectorState.CONNECTED:
+                await self._local_disconnect()
+                await self._disconnected.wait()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
             self._run_task = None
+        await self._close_connection()

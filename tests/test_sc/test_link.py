@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from bacpypes3.debugging import bacpypes_debugging, ModuleLogger
 from bacpypes3.pdu import SecureConnectAddress
+from bacpypes3.netservice import NetworkServiceAccessPoint
 from bacpypes3.sc.link import SCNodeLinkLayer
 from bacpypes3.sc.service import SCBVLLServiceAccessPoint, SCHubConnector
 from bacpypes3.sc.bvll import BVLLCodec
@@ -52,11 +53,18 @@ class TestSCNodeLinkLayer(unittest.TestCase):
     def test_vmac_change_propagates(self):
         link_layer, vmac = self.make()
         new_vmac = SecureConnectAddress.random()
+        nsap = NetworkServiceAccessPoint()
+        nsap.bind(link_layer, address=vmac)
+        changes = []
+        link_layer.on_vmac_change = changes.append
 
         # simulate the connector regenerating its VMAC after a collision
         link_layer.connector.vmac = new_vmac
         link_layer._vmac_changed(new_vmac)
         assert link_layer.local_vmac is new_vmac
+        assert nsap.local_adapter is not None
+        assert nsap.local_adapter.adapterAddr is new_vmac
+        assert changes == [new_vmac]
 
 
 if __name__ == "__main__":

@@ -10,7 +10,9 @@ through its ``_fsm_*`` handlers with a fake WebSocket connection, so no live
 TLS socket is required.
 """
 
+import asyncio
 import unittest
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 from bacpypes3.debugging import bacpypes_debugging, ModuleLogger, xtob
@@ -23,10 +25,16 @@ from bacpypes3.sc.bvll import (
     DisconnectRequest,
     DisconnectACK,
     HeartbeatRequest,
+    HeartbeatACK,
     EncapsulatedNPDU,
     Result,
 )
-from bacpypes3.sc.service import SCHubConnector, HubConnectorState
+from bacpypes3.sc.service import (
+    SCHubConnector,
+    HubConnectorState,
+    HUB_CONNECTOR_CONNECTED_PRIMARY,
+    HUB_CONNECTOR_CONNECTED_FAILOVER,
+)
 
 # some debugging
 _debug = 0
@@ -236,6 +244,61 @@ class TestHubConnectorFSM(unittest.IsolatedAsyncioTestCase):
         await connector._close_connection()
         assert states[-1] == HUB_CONNECTOR_NO_CONNECTION
 
+    async def test_heartbeat_ack_must_match(self):
+        connector, capture = await self._established()
+        await connector._fsm_message(connect_accept_bytes())
+        await connector._fsm_heartbeat()
+        message_id = connector._heartbeat_message_id
+        ack = HeartbeatACK()
+        ack.bvlcMessageID = message_id + 1
+        await connector._fsm_message(ack.encode().pduData)
+        assert connector._heartbeat_message_id == message_id
+        ack.bvlcMessageID = message_id
+        await connector._fsm_message(ack.encode().pduData)
+        assert connector._heartbeat_message_id is None
+        assert "heartbeat_ack" not in connector._timers
+
+    async def test_unanswered_heartbeat_disconnects(self):
+        connector, capture = await self._established()
+        connector.heartbeat_timeout = 0.01
+        connector.disconnect_wait_timeout = 0.01
+        conn = connector._conn
+        await connector._fsm_message(connect_accept_bytes())
+        await connector._fsm_heartbeat()
+        await asyncio.sleep(0.06)
+        assert conn.closed
+        assert connector._state == HubConnectorState.IDLE
+        assert any(isinstance(decode(data), DisconnectRequest) for data in conn.sent)
+
+    async def test_npdu_before_accept_is_not_forwarded(self):
+        connector, capture = await self._established()
+        npdu = EncapsulatedNPDU(xtob("0104cafe"))
+        npdu.bvlcMessageID = 1
+        await connector._fsm_message(npdu.encode().pduData)
+        assert capture.received == []
+
+    async def test_concurrent_close_waits_for_socket_cleanup(self):
+        connector, capture = await self._established()
+        closing = asyncio.Event()
+        release = asyncio.Event()
+        conn = connector._conn
+
+        async def close():
+            closing.set()
+            await release.wait()
+            conn.closed = True
+
+        conn.close = close
+        connector._start_timer("close", 0, connector._close_connection)
+        await asyncio.wait_for(closing.wait(), 1)
+        cleanup = asyncio.create_task(connector._close_connection())
+        await asyncio.sleep(0)
+        assert not cleanup.done()
+        release.set()
+        await asyncio.wait_for(cleanup, 1)
+        assert conn.closed
+        assert connector._socket_close_task is None
+
     async def test_indication_requires_connection(self):
         connector, capture = await self._established()
 
@@ -248,6 +311,203 @@ class TestHubConnectorFSM(unittest.IsolatedAsyncioTestCase):
         connector._conn.sent.clear()
         await connector.indication(PDU(xtob("deadbeef")))
         assert connector._conn.sent == [xtob("deadbeef")]
+
+
+class LiveFakeConn(FakeConn):
+    def __init__(self, *, accept=True, reject=False):
+        super().__init__()
+        self.accept = accept
+        self.reject = reject
+        self.incoming = asyncio.Queue()
+        self.messages_sent = asyncio.Queue()
+        self.closed_event = asyncio.Event()
+
+    async def send(self, data):
+        await super().send(data)
+        message = decode(data)
+        self.messages_sent.put_nowait(message)
+        if isinstance(message, ConnectRequest):
+            if self.reject:
+                result = Result(
+                    result_function=ConnectRequest.bvlcFunction,
+                    result_code=1,
+                    error_class=ErrorClass.communication,
+                    error_code=ErrorCode.other,
+                )
+                result.bvlcMessageID = message.bvlcMessageID
+                self.incoming.put_nowait(bytes(result.encode().pduData))
+            elif self.accept:
+                self.incoming.put_nowait(bytes(connect_accept_bytes(message.bvlcMessageID)))
+        elif isinstance(message, DisconnectRequest):
+            ack = DisconnectACK()
+            ack.bvlcMessageID = message.bvlcMessageID
+            self.incoming.put_nowait(bytes(ack.encode().pduData))
+
+    async def recv(self):
+        message = await self.incoming.get()
+        if message is None:
+            raise ConnectionError("connection closed")
+        return message
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        message = await self.incoming.get()
+        if message is None:
+            raise StopAsyncIteration
+        return message
+
+    async def close(self):
+        if not self.closed:
+            await super().close()
+            self.incoming.put_nowait(None)
+            self.closed_event.set()
+
+
+class TestHubConnectorLifecycle(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.states = asyncio.Queue()
+        self.connector, self.capture = make_connector(
+            failover_hub_uri="wss://failover/",
+            minimum_reconnect_time=0.01,
+            maximum_reconnect_time=0.04,
+            connect_wait_timeout=0.1,
+            disconnect_wait_timeout=0.01,
+            heartbeat_timeout=100,
+            on_connector_state_change=self.states.put_nowait,
+        )
+
+    async def asyncTearDown(self):
+        await asyncio.wait_for(self.connector.close(), 1)
+        assert not self.connector._timers
+
+    async def wait_state(self, expected):
+        async def wait():
+            while await self.states.get() != expected:
+                pass
+        await asyncio.wait_for(wait(), 1)
+
+    async def test_failed_primary_does_not_delay_first_failover(self):
+        self.connector._retry_delay = [60, 60]
+        failover = LiveFakeConn()
+        self.connector._connect = AsyncMock(
+            side_effect=[ConnectionRefusedError(), failover]
+        )
+        self.connector.start()
+        await self.wait_state(HUB_CONNECTOR_CONNECTED_FAILOVER)
+        assert self.connector._connect.call_args_list[1].args == ("wss://failover/",)
+        assert self.connector._conn is failover
+
+    async def test_bacnet_rejection_tries_failover(self):
+        rejected = LiveFakeConn(reject=True)
+        failover = LiveFakeConn()
+        self.connector._retry_delay[0] = 60
+        self.connector._connect = AsyncMock(side_effect=[rejected, failover])
+        self.connector.start()
+        await self.wait_state(HUB_CONNECTOR_CONNECTED_FAILOVER)
+        assert rejected.closed
+        assert self.connector._conn is failover
+
+    async def test_connect_accept_timeout_tries_failover(self):
+        stalled = LiveFakeConn(accept=False)
+        failover = LiveFakeConn()
+        self.connector.connect_wait_timeout = 0.01
+        self.connector._retry_delay[0] = 60
+        self.connector._connect = AsyncMock(side_effect=[stalled, failover])
+        self.connector.start()
+        await self.wait_state(HUB_CONNECTOR_CONNECTED_FAILOVER)
+        assert stalled.closed
+
+    async def test_lost_primary_retries_primary_before_failover(self):
+        primary, failover = LiveFakeConn(), LiveFakeConn()
+        self.connector._connect = AsyncMock(
+            side_effect=[primary, ConnectionRefusedError(), failover]
+        )
+        self.connector.start()
+        await self.wait_state(HUB_CONNECTOR_CONNECTED_PRIMARY)
+        self.connector._retry_at[0] = 0
+        self.connector._retry_delay[0] = 60
+        await primary.close()
+        await self.wait_state(HUB_CONNECTOR_CONNECTED_FAILOVER)
+        assert [call.args[0] for call in self.connector._connect.call_args_list] == [
+            "wss://hub.example.org/", "wss://hub.example.org/", "wss://failover/"
+        ]
+
+    async def test_primary_recovery_preserves_failover_traffic_until_accept(self):
+        failover, primary = LiveFakeConn(), LiveFakeConn(accept=False)
+        self.connector._connect = AsyncMock(
+            side_effect=[ConnectionRefusedError(), failover, primary]
+        )
+        self.connector.start()
+        await self.wait_state(HUB_CONNECTOR_CONNECTED_FAILOVER)
+        request = await asyncio.wait_for(primary.messages_sent.get(), 1)
+        assert isinstance(request, ConnectRequest)
+        assert self.connector._conn is failover
+        npdu = EncapsulatedNPDU(xtob("0104cafe"))
+        npdu.bvlcMessageID = 15
+        data = bytes(npdu.encode().pduData)
+        await self.connector.indication(PDU(data))
+        assert failover.sent[-1] == data
+        received = asyncio.Event()
+
+        async def capture(pdu):
+            self.capture.received.append(pdu)
+            received.set()
+
+        self.capture.confirmation = capture
+        failover.incoming.put_nowait(data)
+        await asyncio.wait_for(received.wait(), 1)
+        primary.incoming.put_nowait(bytes(connect_accept_bytes(request.bvlcMessageID)))
+        await self.wait_state(HUB_CONNECTOR_CONNECTED_PRIMARY)
+        assert failover.closed
+        assert any(isinstance(decode(data), DisconnectRequest) for data in failover.sent)
+        assert self.connector._conn is primary
+        await self.connector.indication(PDU(data))
+        assert primary.sent[-1] == data
+
+    async def test_rejected_primary_probe_keeps_failover(self):
+        failover, rejected = LiveFakeConn(), LiveFakeConn(reject=True)
+        self.connector._connect = AsyncMock(
+            side_effect=[ConnectionRefusedError(), failover, rejected]
+        )
+        self.connector.start()
+        await self.wait_state(HUB_CONNECTOR_CONNECTED_FAILOVER)
+        await asyncio.wait_for(rejected.closed_event.wait(), 1)
+        assert self.connector._conn is failover
+        assert self.connector.connected.is_set()
+        assert not failover.closed
+
+    async def test_close_cancels_pending_primary_handshake(self):
+        failover, primary = LiveFakeConn(), LiveFakeConn(accept=False)
+        self.connector._connect = AsyncMock(
+            side_effect=[ConnectionRefusedError(), failover, primary]
+        )
+        self.connector.start()
+        await self.wait_state(HUB_CONNECTOR_CONNECTED_FAILOVER)
+        await asyncio.wait_for(primary.messages_sent.get(), 1)
+        await self.connector.close()
+        assert primary.closed
+        assert failover.closed
+        assert self.connector._run_task is None
+
+    async def test_close_cancels_pending_websocket_open(self):
+        opening = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def connect(uri):
+            opening.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        self.connector._connect = connect
+        self.connector.start()
+        await asyncio.wait_for(opening.wait(), 1)
+        await self.connector.close()
+        assert cancelled.is_set()
+        assert self.connector._run_task is None
 
 
 if __name__ == "__main__":

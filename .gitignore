@@ -65,3 +65,6 @@ target/
 # BACnet/SC operational credentials - never commit private keys or certificates
 *.pem
 *.key
+
+# Claude Code resume note (personal scratchpad)
+claude-resume-session

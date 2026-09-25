@@ -69,7 +69,9 @@ class TestWhoIsIAmRace:
         broadcast that many devices reply to close together.
         """
         if _debug:
-            TestWhoIsIAmRace._debug("test_duplicate_i_am_does_not_crash_matching_who_is")
+            TestWhoIsIAmRace._debug(
+                "test_duplicate_i_am_does_not_crash_matching_who_is"
+            )
 
         app = Application()
         address = Address("10.0.0.1")

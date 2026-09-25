@@ -64,7 +64,8 @@ from .netservice import (
     NetworkServiceElement,
     RouterInfoCache,
 )
-from .object import DeviceObject, Object
+from .object import DeviceObject, Object, TrendLogObject
+from .local.trendlog import TrendLogController
 from .pdu import Address
 from .primitivedata import ObjectIdentifier, ObjectType
 from .service.cov import ChangeOfValueServices
@@ -240,13 +241,16 @@ class DeviceInfoCache(DebugContents):
         # if any of these references are different the cache has been
         # updated while a segmentation state machine was running, just
         # log it, unless it was not populated
-        if (info1 is not None or info2 is not None) and (device_info is not info1) or (device_info is not info2):
+        if (
+            (info1 is not None or info2 is not None)
+            and (device_info is not info1)
+            or (device_info is not info2)
+        ):
             DeviceInfoCache._info(f"Cache update for device {device_instance}")
 
         # put it in the cache, replacing possible existing instance(s)
         self.address_cache[device_address] = device_info
         self.instance_cache[device_instance] = device_info
-
 
     def acquire(self, device_info: DeviceInfo) -> None:
         """
@@ -304,6 +308,7 @@ class Application(
     objectName: Dict[str, _Any]
     objectIdentifier: Dict[ObjectIdentifier, _Any]
     link_layers: Dict[ObjectIdentifier, _Any]
+    trend_log_controllers: Dict[ObjectIdentifier, TrendLogController]
 
     next_invoke_id: int
     _requests: Dict[Address, List[Tuple[APDU, APDUFuture]]]
@@ -324,6 +329,7 @@ class Application(
 
         # references to link layer objects
         self.link_layers = {}
+        self.trend_log_controllers = {}
 
         # use the provided cache or make a default one
         self.device_info_cache = device_info_cache or DeviceInfoCache()
@@ -782,6 +788,11 @@ class Application(
         if isinstance(obj, ScheduleObject):
             obj.interpret_schedule()
 
+        if isinstance(obj, TrendLogObject):
+            controller = TrendLogController(self, obj)
+            self.trend_log_controllers[obj.objectIdentifier] = controller
+            controller.start()
+
     # async def capture_bound_address(self, network_port_object, link_layer):
     #     if _debug:
     #         Application._debug("capture_bound_address %r %r", network_port_object, link_layer)
@@ -807,6 +818,10 @@ class Application(
 
         # let the object knows it's no longer associated with an application
         obj._app = None
+
+        controller = self.trend_log_controllers.pop(object_identifier, None)
+        if controller:
+            controller.close()
 
         if isinstance(obj, NetworkPortObject):
             link_layer = self.link_layers.get(obj.objectIdentifier, None)
@@ -1153,6 +1168,10 @@ class Application(
                     loop.create_task(result)
                 else:
                     asyncio.run(result)
+
+        for controller in self.trend_log_controllers.values():
+            controller.close()
+        self.trend_log_controllers.clear()
 
     # -----
 

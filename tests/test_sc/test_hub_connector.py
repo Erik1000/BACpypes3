@@ -337,7 +337,9 @@ class LiveFakeConn(FakeConn):
                 result.bvlcMessageID = message.bvlcMessageID
                 self.incoming.put_nowait(bytes(result.encode().pduData))
             elif self.accept:
-                self.incoming.put_nowait(bytes(connect_accept_bytes(message.bvlcMessageID)))
+                self.incoming.put_nowait(
+                    bytes(connect_accept_bytes(message.bvlcMessageID))
+                )
         elif isinstance(message, DisconnectRequest):
             ack = DisconnectACK()
             ack.bvlcMessageID = message.bvlcMessageID
@@ -386,6 +388,7 @@ class TestHubConnectorLifecycle(unittest.IsolatedAsyncioTestCase):
         async def wait():
             while await self.states.get() != expected:
                 pass
+
         await asyncio.wait_for(wait(), 1)
 
     async def test_failed_primary_does_not_delay_first_failover(self):
@@ -431,7 +434,9 @@ class TestHubConnectorLifecycle(unittest.IsolatedAsyncioTestCase):
         await primary.close()
         await self.wait_state(HUB_CONNECTOR_CONNECTED_FAILOVER)
         assert [call.args[0] for call in self.connector._connect.call_args_list] == [
-            "wss://hub.example.org/", "wss://hub.example.org/", "wss://failover/"
+            "wss://hub.example.org/",
+            "wss://hub.example.org/",
+            "wss://failover/",
         ]
 
     async def test_primary_recovery_preserves_failover_traffic_until_accept(self):
@@ -461,7 +466,9 @@ class TestHubConnectorLifecycle(unittest.IsolatedAsyncioTestCase):
         primary.incoming.put_nowait(bytes(connect_accept_bytes(request.bvlcMessageID)))
         await self.wait_state(HUB_CONNECTOR_CONNECTED_PRIMARY)
         assert failover.closed
-        assert any(isinstance(decode(data), DisconnectRequest) for data in failover.sent)
+        assert any(
+            isinstance(decode(data), DisconnectRequest) for data in failover.sent
+        )
         assert self.connector._conn is primary
         await self.connector.indication(PDU(data))
         assert primary.sent[-1] == data

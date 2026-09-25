@@ -14,8 +14,16 @@ from datetime import datetime, timedelta
 
 from bacpypes3.argparse import SimpleArgumentParser
 from bacpypes3.app import Application
-from bacpypes3.basetypes import DateTime, LogRecord, LogRecordLogDatum, StatusFlags
+from bacpypes3.basetypes import (
+    DateTime,
+    DeviceObjectPropertyReference,
+    LogRecord,
+    LogRecordLogDatum,
+    LoggingType,
+    StatusFlags,
+)
 from bacpypes3.constructeddata import ListOf
+from bacpypes3.local.analog import AnalogValueObject
 from bacpypes3.object import TrendLogObject
 
 
@@ -56,16 +64,30 @@ async def main() -> None:
 
     app = Application.from_args(args)
 
-    log_buffer = build_debug_log_buffer()
+    source = AnalogValueObject(
+        objectIdentifier=("analog-value", 1),
+        objectName="read-range-source",
+        presentValue=0.0,
+        statusFlags=[0, 0, 0, 0],
+        units="noUnits",
+    )
+    app.add_object(source)
+
     trend_log = TrendLogObject(
         objectIdentifier=("trend-log", 1),
         objectName="TestTL",
         enable=True,
         stopWhenFull=False,
-        bufferSize=len(log_buffer),
-        logBuffer=log_buffer,
-        recordCount=len(log_buffer),
-        totalRecordCount=len(log_buffer),
+        bufferSize=20,
+        logBuffer=ListOf(LogRecord)(),
+        recordCount=0,
+        totalRecordCount=0,
+        loggingType=LoggingType.polled,
+        logInterval=5,
+        logDeviceObjectProperty=DeviceObjectPropertyReference(
+            objectIdentifier=("analog-value", 1),
+            propertyIdentifier="present-value",
+        ),
         statusFlags=StatusFlags([0, 0, 0, 0]),
     )
     app.add_object(trend_log)

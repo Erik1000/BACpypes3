@@ -2876,3 +2876,24 @@ class TrendLogObject(Object):
     eventAlgorithmInhibitRef: ObjectPropertyReference
     eventAlgorithmInhibit: Boolean
     reliabilityEvaluationInhibit: Boolean
+
+    def __setattr__(self, attr: str, value: _Any) -> None:
+        """Recalculate Trend Log acquisition after local property changes."""
+        super().__setattr__(attr, value)
+        if not attr.startswith("_") and attr in self._elements:
+            controller = getattr(self, "_trend_log_controller", None)
+            if controller is not None:
+                controller.recalculate()
+
+    async def write_property(
+        self,
+        attr: Union[int, str],
+        value: _Any,
+        index: Optional[int] = None,
+        priority: Optional[int] = None,
+    ) -> None:
+        """Recalculate Trend Log acquisition after BACnet property writes."""
+        await super().write_property(attr, value, index, priority)
+        controller = getattr(self, "_trend_log_controller", None)
+        if controller is not None:
+            controller.recalculate()

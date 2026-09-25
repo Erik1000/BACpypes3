@@ -1240,9 +1240,10 @@ class ReadRangeServices:
         untimestamped_items = [
             pair for pair in numbered_items if timestamp_value(pair[1]) is None
         ]
-        time_ordered_items = sorted(
-            timestamped_items, key=lambda pair: timestamp_value(pair[1])
-        ) + untimestamped_items
+        time_ordered_items = (
+            sorted(timestamped_items, key=lambda pair: timestamp_value(pair[1]))
+            + untimestamped_items
+        )
 
         selected = items
         first_item = False
@@ -1307,7 +1308,9 @@ class ReadRangeServices:
                 selected = [item for _, item in selected_pairs]
                 if selected:
                     first_sequence_number = selected_pairs[0][0]
-                    selected_sequence_numbers = {sequence_number for sequence_number, _ in selected_pairs}
+                    selected_sequence_numbers = {
+                        sequence_number for sequence_number, _ in selected_pairs
+                    }
                     first_item = first_sequence in selected_sequence_numbers
                     last_item = (
                         first_sequence + len(items) - 1 in selected_sequence_numbers
@@ -1359,7 +1362,9 @@ class ReadRangeServices:
                         sequence_number for sequence_number, _ in selected_pairs
                     }
                     first_item = first_sequence in selected_sequence_numbers
-                    last_item = first_sequence + len(items) - 1 in selected_sequence_numbers
+                    last_item = (
+                        first_sequence + len(items) - 1 in selected_sequence_numbers
+                    )
                 else:
                     first_item = False
                     last_item = False
@@ -1389,7 +1394,10 @@ class ReadRangeServices:
                     (sequence_number, item)
                     for sequence_number, item in time_ordered_items
                     if timestamp_value(item) is not None
-                    and (beginning_time is None or timestamp_value(item) >= beginning_time)
+                    and (
+                        beginning_time is None
+                        or timestamp_value(item) >= beginning_time
+                    )
                     and (ending_time is None or timestamp_value(item) <= ending_time)
                 ]
                 if beginning_time is None and ending_time is None:
@@ -1401,7 +1409,9 @@ class ReadRangeServices:
                         sequence_number for sequence_number, _ in matching
                     }
                     first_item = first_sequence in selected_sequence_numbers
-                    last_item = first_sequence + len(items) - 1 in selected_sequence_numbers
+                    last_item = (
+                        first_sequence + len(items) - 1 in selected_sequence_numbers
+                    )
                     more_items = matching[-1][0] < first_sequence + len(items) - 1
             else:
                 raise ExecutionError(

@@ -3604,6 +3604,12 @@ class RangeByTime(Sequence):
     count = Integer()
 
 
+class RangeByTimeRange(Sequence):
+    _order = ("beginningTime", "endingTime")
+    beginningTime = DateTime()
+    endingTime = DateTime()
+
+
 class ReadAccessResultElementChoice(Choice):
     propertyValue = Any(_context=4)
     propertyAccessError = ErrorType(_context=5)
@@ -3983,6 +3989,7 @@ class ProcessIdSelection(Choice):
 
 class Range(Choice):
     byPosition = RangeByPosition(_context=3)
+    byTimeRange = RangeByTimeRange(_context=5)
     bySequenceNumber = RangeBySequenceNumber(_context=6)
     byTime = RangeByTime(_context=7)
 

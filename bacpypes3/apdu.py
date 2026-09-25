@@ -670,7 +670,7 @@ class ConfirmedServiceChoice(Enumerated):
     readProperty = 12
     readPropertyMultiple = 14
     readPropertyConditional = 13  ###TODO
-    readRange = 26  ###TODO
+    readRange = 26
     reinitializeDevice = 20
     removeListElement = 9
     requestKey = 25  ###TODO
@@ -1839,7 +1839,7 @@ class ReadRangeACK(ComplexAckSequence):
     propertyArrayIndex = Unsigned(_context=2, _optional=True)
     resultFlags = ResultFlags(_context=3)
     itemCount = Unsigned(_context=4)
-    itemData = SequenceOf(Any(_context=5))  # SequenceOf(Any, _context=5)
+    itemData = SequenceOf(Any, _context=5)
     firstSequenceNumber = Unsigned(_context=6, _optional=True)
 
 

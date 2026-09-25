@@ -30,13 +30,15 @@ from ..basetypes import (
     RangeByPosition,
     RangeBySequenceNumber,
     RangeByTime,
+    RangeByTimeRange,
     ReadAccessResult,
     ReadAccessResultElement,
     ReadAccessResultElementChoice,
     ReadAccessSpecification,
     ObjectPropertyReference,
+    ResultFlags,
 )
-from ..constructeddata import Any, Array, List, SequenceOf
+from ..constructeddata import Any, Array, List, SequenceOf, ListOf
 from ..debugging import ModuleLogger, bacpypes_debugging
 from ..errors import (
     ExecutionError,
@@ -45,7 +47,15 @@ from ..errors import (
 )
 from ..object import DeviceObject, Object
 from ..pdu import Address
-from ..primitivedata import Atomic, Date, Null, ObjectIdentifier, Time, Unsigned
+from ..primitivedata import (
+    Atomic,
+    Date,
+    Null,
+    ObjectIdentifier,
+    Time,
+    Unsigned,
+    Integer,
+)
 from ..vendor import VendorInfo, get_vendor_info
 
 # some debugging
@@ -1003,6 +1013,7 @@ class ReadRangeServices:
     device_object: Optional[DeviceObject]
     device_info_cache: "DeviceInfoCache"  # noqa: F821
 
+    # Indication implementation
     async def read_range(
         self,
         address: Address,
@@ -1017,17 +1028,19 @@ class ReadRangeServices:
         was received.
 
         :param args: String with <addr> <type> <inst> <prop> [ <indx> ]
-        :param range_params: parameters defining how to query the range, a list of five elements
+        :param range_params: parameters defining how to query the range
         :returns: data read from device (list of LogRecords)
 
-        range_params: a list of five elements: (range_type: str, first: int, date: str, time: str, count: int)
-            range_type: one of ['p', 's', 't']
+        range_params: a five-element tuple whose shape depends on range_type
+            range_type: one of ['p', 's', 't', 'r']
                         p - RangeByPosition:
                                 uses (first, count)
                         s - RangeBySequenceNumber:
                                 uses (first, count)
                         t - RangeByTime: Filter by the given time
                                 uses (date, time, count)
+                                r - RangeByTimeRange:
+                                    uses (beginning_date, beginning_time, ending_date, ending_time)
             first: int, first element when querying by Position or Sequence Number
             date: str, "YYYY-mm-DD" passed to bacpypes.primitivedata.Date constructor
             time: str, "HH:MM:SS" passed to bacpypes.primitivedata.Time constructor
@@ -1047,7 +1060,25 @@ class ReadRangeServices:
 
         read_range_request.pduDestination = address
         if range_params is not None:
-            range_type, first, date, time, count = range_params
+            range_type = range_params[0]
+            if range_type == "r":
+                if len(range_params) != 5:
+                    raise ValueError(
+                        "time range parameters must be (r, beginning_date, beginning_time, ending_date, ending_time)"
+                    )
+                _, beginning_date, beginning_time, ending_date, ending_time = (
+                    range_params
+                )
+                rbt = RangeByTimeRange(
+                    beginningTime=DateTime(
+                        date=Date(beginning_date), time=Time(beginning_time)
+                    ),
+                    endingTime=DateTime(date=Date(ending_date), time=Time(ending_time)),
+                )
+                read_range_request.range = Range(byTimeRange=rbt)
+                first = date = time = count = None
+            else:
+                range_type, first, date, time, count = range_params
             if range_type == "p":
                 rbp = RangeByPosition(referenceIndex=int(first), count=int(count))
                 read_range_request.range = Range(byPosition=rbp)
@@ -1062,6 +1093,8 @@ class ReadRangeServices:
                     count=int(count),
                 )
                 read_range_request.range = Range(byTime=rbt)
+            elif range_type == "r":
+                pass
             elif range_type == "x":
                 # should be missing required parameter
                 read_range_request.range = Range()
@@ -1115,8 +1148,13 @@ class ReadRangeServices:
         if not property_type:
             return "-no property type-"
 
-        # cast it out of the Any
-        property_value = response.itemData.cast_out(property_type)
+        # itemData is a SequenceOf(Any), so decode each returned list element
+        # using the subtype of the list property.
+        if issubclass(property_type, Array):
+            item_type = property_type._subtype._subtype
+        else:
+            item_type = property_type._subtype
+        property_value = [item.cast_out(item_type) for item in response.itemData]
         if _debug:
             ReadRangeServices._debug(
                 "    - property_value: %r %r", property_value, property_type.__class__
@@ -1129,7 +1167,7 @@ class ReadRangeServices:
         if _debug:
             ReadRangeServices._debug("do_ReadRangeRequest %r", apdu)
 
-        obj_id = apdu.objectIdentifier
+        obj_id: ObjectIdentifier = apdu.objectIdentifier
         if (obj_id == ("device", 4194303)) and self.device_object is not None:
             obj_id = self.device_object.objectIdentifier
 
@@ -1156,6 +1194,7 @@ class ReadRangeServices:
 
         try:
             # for TrendLog objects, this should be List[LogRecord]
+            # This will be the whole LogBuffer.
             value = await obj.read_property(
                 apdu.propertyIdentifier, apdu.propertyArrayIndex
             )
@@ -1169,6 +1208,42 @@ class ReadRangeServices:
         else:
             items = [value]
 
+        # Trend Log buffers may be cyclic. Map each returned item to its
+        # actual sequence number before applying any range selection.
+        record_count_value = getattr(obj, "recordCount", None)
+        record_count = (
+            len(items) if record_count_value is None else int(record_count_value)
+        )
+        total_record_count_value = getattr(obj, "totalRecordCount", None)
+        total_record_count = (
+            record_count
+            if total_record_count_value is None
+            else int(total_record_count_value)
+        )
+        first_sequence = max(1, total_record_count - record_count + 1)
+        numbered_items = list(
+            zip(range(first_sequence, first_sequence + len(items)), items)
+        )
+
+        def timestamp_value(item):
+            timestamp = getattr(item, "timestamp", None)
+            if timestamp is None or getattr(timestamp, "is_special", False):
+                return None
+            try:
+                return timestamp.datetime
+            except (AttributeError, ValueError):
+                return None
+
+        timestamped_items = [
+            pair for pair in numbered_items if timestamp_value(pair[1]) is not None
+        ]
+        untimestamped_items = [
+            pair for pair in numbered_items if timestamp_value(pair[1]) is None
+        ]
+        time_ordered_items = sorted(
+            timestamped_items, key=lambda pair: timestamp_value(pair[1])
+        ) + untimestamped_items
+
         selected = items
         first_item = False
         last_item = False
@@ -1177,31 +1252,157 @@ class ReadRangeServices:
 
         if apdu.range is not None:
             if apdu.range.byPosition is not None:
-                range_spec = apdu.range.byPosition
+                range_spec: RangeByPosition = apdu.range.byPosition
                 if range_spec.count == 0:
                     raise ExecutionError(
                         errorClass="property", errorCode="invalidArrayIndex"
                     )
 
+                reference_index = range_spec.referenceIndex
+                if reference_index < 1:
+                    raise ExecutionError(
+                        errorClass="property", errorCode="invalidArrayIndex"
+                    )
                 if range_spec.count > 0:
-                    start_index = range_spec.referenceIndex - 1
-                    stop_index = start_index + range_spec.count
+                    start_index = reference_index - 1
+                    stop_index = min(start_index + range_spec.count, len(items))
                     selected = items[start_index:stop_index]
-                    first_item = bool(selected and start_index <= 0)
-                    last_item = bool(selected and stop_index >= len(items))
+                    first_item = bool(selected and start_index == 0)
+                    last_item = bool(selected and stop_index == len(items))
+                    more_items = stop_index < len(items)
                 else:
-                    start_index = range_spec.referenceIndex + range_spec.count
-                    stop_index = range_spec.referenceIndex + 1
-                    selected = items[start_index:stop_index]
-                    first_item = bool(selected and start_index <= 0)
-                    last_item = bool(selected and stop_index >= len(items))
+                    end_index = min(reference_index, len(items))
+                    start_index = max(end_index + range_spec.count, 0)
+                    selected = list(reversed(items[start_index:end_index]))
+                    first_item = bool(selected and start_index == 0)
+                    last_item = bool(selected and end_index == len(items))
+                    more_items = start_index > 0
 
             elif apdu.range.bySequenceNumber is not None:
-                raise NotImplementedError(
-                    "ReadRange by sequence number is not implemented"
-                )
+                range_spec: RangeBySequenceNumber = apdu.range.bySequenceNumber
+                if range_spec.count == 0:
+                    raise ExecutionError(
+                        errorClass="property", errorCode="invalidArrayIndex"
+                    )
+
+                reference_sequence = range_spec.referenceSequenceNumber
+
+                if range_spec.count > 0:
+                    matching = [
+                        (sequence_number, item)
+                        for sequence_number, item in numbered_items
+                        if sequence_number >= reference_sequence
+                    ]
+                    selected_pairs = matching[: range_spec.count]
+                    more_items = len(matching) > len(selected_pairs)
+                else:
+                    matching = [
+                        (sequence_number, item)
+                        for sequence_number, item in numbered_items
+                        if sequence_number <= reference_sequence
+                    ]
+                    selected_pairs = list(reversed(matching[-abs(range_spec.count) :]))
+                    more_items = len(matching) > len(selected_pairs)
+
+                selected = [item for _, item in selected_pairs]
+                if selected:
+                    first_sequence_number = selected_pairs[0][0]
+                    selected_sequence_numbers = {sequence_number for sequence_number, _ in selected_pairs}
+                    first_item = first_sequence in selected_sequence_numbers
+                    last_item = (
+                        first_sequence + len(items) - 1 in selected_sequence_numbers
+                    )
             elif apdu.range.byTime is not None:
-                raise NotImplementedError("ReadRange by time is not implemented")
+                range_spec: RangeByTime = apdu.range.byTime
+                if range_spec.count == 0:
+                    raise ExecutionError(
+                        errorClass="property", errorCode="invalidArrayIndex"
+                    )
+
+                reference_time = None
+                if not range_spec.referenceTime.is_special:
+                    reference_time = range_spec.referenceTime.datetime
+
+                if range_spec.count > 0:
+                    matching = [
+                        (sequence_number, item)
+                        for sequence_number, item in time_ordered_items
+                        if timestamp_value(item) is not None
+                        and (
+                            reference_time is None
+                            or timestamp_value(item) >= reference_time
+                        )
+                    ]
+                    if reference_time is None:
+                        matching += untimestamped_items
+                    selected_pairs = matching[: range_spec.count]
+                    more_items = len(matching) > len(selected_pairs)
+                else:
+                    matching = [
+                        (sequence_number, item)
+                        for sequence_number, item in time_ordered_items
+                        if timestamp_value(item) is not None
+                        and (
+                            reference_time is None
+                            or timestamp_value(item) <= reference_time
+                        )
+                    ]
+                    if reference_time is None:
+                        matching += untimestamped_items
+                    selected_pairs = list(reversed(matching[-abs(range_spec.count) :]))
+                    more_items = len(matching) > len(selected_pairs)
+
+                selected = [item for _, item in selected_pairs]
+                if selected:
+                    first_sequence_number = selected_pairs[0][0]
+                    selected_sequence_numbers = {
+                        sequence_number for sequence_number, _ in selected_pairs
+                    }
+                    first_item = first_sequence in selected_sequence_numbers
+                    last_item = first_sequence + len(items) - 1 in selected_sequence_numbers
+                else:
+                    first_item = False
+                    last_item = False
+                    first_sequence_number = None
+            elif apdu.range.byTimeRange is not None:
+                range_spec: RangeByTimeRange = apdu.range.byTimeRange
+                beginning_time = (
+                    None
+                    if range_spec.beginningTime.is_special
+                    else range_spec.beginningTime.datetime
+                )
+                ending_time = (
+                    None
+                    if range_spec.endingTime.is_special
+                    else range_spec.endingTime.datetime
+                )
+                if (
+                    beginning_time is not None
+                    and ending_time is not None
+                    and beginning_time > ending_time
+                ):
+                    raise ExecutionError(
+                        errorClass="property", errorCode="inconsistentParameters"
+                    )
+
+                matching = [
+                    (sequence_number, item)
+                    for sequence_number, item in time_ordered_items
+                    if timestamp_value(item) is not None
+                    and (beginning_time is None or timestamp_value(item) >= beginning_time)
+                    and (ending_time is None or timestamp_value(item) <= ending_time)
+                ]
+                if beginning_time is None and ending_time is None:
+                    matching += untimestamped_items
+                selected = [item for _, item in matching]
+                if selected:
+                    first_sequence_number = matching[0][0]
+                    selected_sequence_numbers = {
+                        sequence_number for sequence_number, _ in matching
+                    }
+                    first_item = first_sequence in selected_sequence_numbers
+                    last_item = first_sequence + len(items) - 1 in selected_sequence_numbers
+                    more_items = matching[-1][0] < first_sequence + len(items) - 1
             else:
                 raise ExecutionError(
                     errorClass="services", errorCode="missingRequiredParameter"
@@ -1221,19 +1422,28 @@ class ReadRangeServices:
                 more_items,
             )
 
-        resp = ReadRangeACK(context=apdu)
+        resp: ReadRangeACK = ReadRangeACK(context=apdu)
         resp.objectIdentifier = obj_id
         resp.propertyIdentifier = apdu.propertyIdentifier
         resp.propertyArrayIndex = apdu.propertyArrayIndex
-        resp.resultFlags = [bool(first_item), bool(last_item), bool(more_items)]
+        resp.resultFlags = ResultFlags(
+            [bool(first_item), bool(last_item), bool(more_items)]
+        )
         resp.itemCount = len(selected)
 
         if resp.itemCount > 0:
-            # item_data = SequenceOf(Any)()
-            # item_data.cast_in(selected)
-            resp.itemData = selected
+            # BACnet ReadRangeACK.itemData is a SequenceOf(Any), not a typed
+            # sequence of the underlying list element type. Each element must be
+            # wrapped in Any so the item payload is encoded as a BACnet value.
+            item_data = SequenceOf(Any, _context=5)()
+            for item in selected:
+                item_data.append(Any(item.encode()))
+            resp.itemData = item_data
+            if first_sequence_number is not None:
+                resp.firstSequenceNumber = first_sequence_number
         else:
-            resp.itemData = SequenceOf(Any)()
+            # create an empty response sequence
+            resp.itemData = SequenceOf(Any, _context=5)()
 
         if _debug:
             ReadRangeServices._debug("    - itemData: %r", resp.itemData)

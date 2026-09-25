@@ -84,12 +84,11 @@ def create_log_handler(
         if not logger:
             logger_ref = _log
 
-        # check for a valid logger name
-        elif logger not in logging.Logger.manager.loggerDict:  # type: ignore
-            raise RuntimeError("not a valid logger name: %r" % (logger,))
-
-        # get the logger
-        logger_ref = logging.getLogger(logger)
+        else:
+            # allow logger names that are not yet registered, such as
+            # the script entry module "__main__" when a program is run
+            # directly.
+            logger_ref = logging.getLogger(logger)
 
     else:
         raise RuntimeError("not a valid logger reference: %r" % (logger,))
@@ -150,12 +149,8 @@ def remove_log_handler(
         if not logger:
             logger_ref = _log
 
-        # check for a valid logger name
-        elif logger not in logging.Logger.manager.loggerDict:  # type: ignore
-            raise RuntimeError("not a valid logger name: %r" % (logger,))
-
-        # get the logger
-        logger_ref = logging.getLogger(logger)
+        else:
+            logger_ref = logging.getLogger(logger)
 
     else:
         raise RuntimeError("not a valid logger reference: %r" % (logger,))
